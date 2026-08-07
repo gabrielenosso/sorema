@@ -15,5 +15,6 @@
     "dotenv": "^16.4.7",
     "zod": "^3.24.1"
   },
-  "license": "Elastic-2.0"
+  "license": "AGPL-3.0-only",
+  "author": "Gabriele Nosso"
 }

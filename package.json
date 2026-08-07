@@ -2,7 +2,7 @@
   "name": "sorema-agent-workspace",
   "private": true,
   "type": "module",
-  "license": "Elastic-2.0",
+  "license": "AGPL-3.0-only",
   "author": "Gabriele Nosso",
   "packageManager": "pnpm@10.32.1",
   "engines": {

@@ -59,8 +59,14 @@ npm view sorema --json | grep -A5 provenance
 
 ## Licence
 
-Elastic License 2.0. See [LICENSE](./LICENSE).
+GNU Affero General Public License v3.0. See [LICENSE](./LICENSE).
 
-You can read it, run it, change it, and run your own copy. What you may not do is offer it to other
-people as a hosted service. The source is open because software that runs commands on your machine
-and holds your API key has no business being unreadable — not because the hosted product is free.
+Copyright (c) 2026 Gabriele Nosso.
+
+Read it, run it, change it, run your own copy. If you offer a modified version to other people over
+a network, the AGPL requires you to publish your changes under the same terms. The source is open
+because software that runs commands on your machine and holds your API key has no business being
+unreadable.
+
+The hosted service is a separate, closed codebase. If the AGPL does not suit what you want to build,
+ask me about a commercial licence — I am the sole author, so I can grant one.

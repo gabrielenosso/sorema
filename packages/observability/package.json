@@ -14,5 +14,6 @@
   "dependencies": {
     "pino": "^9.5.0"
   },
-  "license": "Elastic-2.0"
+  "license": "AGPL-3.0-only",
+  "author": "Gabriele Nosso"
 }
