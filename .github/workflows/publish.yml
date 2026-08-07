@@ -1,0 +1,48 @@
+name: publish cli
+
+on:
+  push:
+    tags:
+      - 'cli-v*'
+  workflow_dispatch:
+
+# `id-token: write` is what lets npm attach a provenance attestation: a signed statement that this
+# exact tarball was built by this workflow, from this commit. Without it, "the source is public" says
+# nothing about what anyone actually downloaded.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # The whole suite, not only the packaged part. A command that ships while the code it bundles
+      # is failing its tests is a command nobody should install.
+      - run: pnpm lint
+      - run: pnpm test
+
+      # The deployment's own addresses are injected here, never committed. They end up in the
+      # published tarball, which is where they belong: the command has to know where to call.
+      - run: pnpm --filter sorema build
+        env:
+          SOREMA_API_URL: ${{ secrets.SOREMA_API_URL }}
+          SOREMA_TUNNEL_URL: ${{ secrets.SOREMA_TUNNEL_URL }}
+
+      - run: npm publish --provenance --access public
+        working-directory: cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
