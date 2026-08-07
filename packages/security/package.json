@@ -13,5 +13,6 @@
   },
   "dependencies": {
     "@sorema/domain-model": "workspace:*"
-  }
+  },
+  "license": "Elastic-2.0"
 }

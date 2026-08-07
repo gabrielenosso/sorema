@@ -28,5 +28,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/ws": "^8.5.13"
-  }
+  },
+  "license": "Elastic-2.0"
 }

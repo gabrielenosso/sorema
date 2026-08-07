@@ -13,5 +13,6 @@
   },
   "dependencies": {
     "pino": "^9.5.0"
-  }
+  },
+  "license": "Elastic-2.0"
 }

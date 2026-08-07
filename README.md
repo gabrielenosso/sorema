@@ -59,4 +59,8 @@ npm view sorema --json | grep -A5 provenance
 
 ## Licence
 
-BSD 3-Clause. See [LICENSE](./LICENSE).
+Elastic License 2.0. See [LICENSE](./LICENSE).
+
+You can read it, run it, change it, and run your own copy. What you may not do is offer it to other
+people as a hosted service. The source is open because software that runs commands on your machine
+and holds your API key has no business being unreadable — not because the hosted product is free.
