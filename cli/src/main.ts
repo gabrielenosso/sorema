@@ -19,9 +19,11 @@ const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
-  sorema pair <CODE>   Claim the code shown in the web app. Once per machine.
-  sorema start         Stay connected. Leave it running.
-  sorema status        Say whether this machine is paired, and as whom.
+  sorema pair <CODE>         Claim the code shown in the web app. Once per machine.
+  sorema start               Stay connected. Leave it running.
+  sorema service install     Start on its own whenever you log in.
+  sorema service uninstall   Stop doing that.
+  sorema status              Say whether this machine is paired, and as whom.
 
 The private key that identifies this machine is generated here and never leaves.
 `;
@@ -110,6 +112,31 @@ async function main(): Promise<number> {
     const { runAgent } = await import('../../apps/local-agent/src/run.js');
     await runAgent();
     return 0;
+  }
+
+  if (command === 'service') {
+    const { planService, installService, uninstallService } = await import('./service.js');
+    // Resolved now rather than written as `npx sorema`: `process.execPath` is the node binary and
+    // argv[1] this script, so the service points at files that exist instead of at a temporary
+    // directory npm is free to clear.
+    const plan = planService(process.execPath, [process.argv[1] ?? '', 'start']);
+
+    if (argument === 'install') {
+      if (!identity.isPaired) {
+        process.stderr.write('Pair this machine first: sorema pair <CODE>\n');
+        return 1;
+      }
+      installService(plan);
+      process.stdout.write(`Installed. Sorema now runs under ${plan.describe}.\n`);
+      return 0;
+    }
+    if (argument === 'uninstall') {
+      uninstallService(plan);
+      process.stdout.write('Removed. Sorema no longer starts on its own.\n');
+      return 0;
+    }
+    process.stderr.write('Usage: sorema service install | sorema service uninstall\n');
+    return 1;
   }
 
   process.stderr.write(`No command called ${command}.\n\n${USAGE}`);
