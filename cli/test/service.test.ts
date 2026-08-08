@@ -33,14 +33,19 @@ describe('what gets written for each platform', () => {
     expect(plan.deactivate.length).toBeGreaterThan(0);
   });
 
-  it('declares the encoding the windows file is actually written in', () => {
-    const plan = planService(NODE, [SCRIPT, 'start'], 'win32', HOME);
+  it('writes bytes that match the encoding the windows file declares', () => {
+    const home = mkdtempSync(join(tmpdir(), 'sorema-encoding-'));
+    const plan = planService(NODE, [SCRIPT, 'start'], 'win32', home);
+    installService(plan, () => {});
+    const bytes = readFileSync(plan.path);
 
-    // The failure this exists for: the declaration said UTF-16 while the bytes were UTF-8, and Task
-    // Scheduler refused every install. A parser that trusts the declaration is the only thing that
-    // notices, because the text reads correctly either way.
-    expect(plan.contents).toContain('encoding="UTF-8"');
-    expect(plan.contents).not.toContain('UTF-16');
+    // Both directions of this were shipped and both were refused with "unable to switch the
+    // encoding": schtasks hands the file to MSXML, which believes the byte order mark over the
+    // declaration. Asserting on the string cannot see it — the text reads correctly either way —
+    // so this reads the bytes and checks they agree with what the declaration promises.
+    expect(bytes[0]).toBe(0xff);
+    expect(bytes[1]).toBe(0xfe);
+    expect(bytes.toString('utf16le')).toContain('encoding="UTF-16"');
   });
 
   it('binds the windows task to one account rather than to any logon', () => {

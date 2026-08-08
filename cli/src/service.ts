@@ -19,6 +19,8 @@ export type ServicePlan = {
   label: string;
   path: string;
   contents: string;
+  /** Windows needs its task definition in UTF-16 with a byte order mark; nothing else does. */
+  encoding: 'utf8' | 'utf16le';
   /** Run first, and allowed to fail: clearing a previous install that may not exist. */
   prepare: readonly (readonly string[])[];
   activate: readonly (readonly string[])[];
@@ -49,6 +51,7 @@ function planLaunchAgent(executable: string, argv: readonly string[], home: stri
   return {
     label: LABEL,
     path,
+    encoding: 'utf8',
     contents: `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -83,6 +86,7 @@ function planSystemdUserUnit(
   return {
     label: 'sorema.service',
     path,
+    encoding: 'utf8',
     contents: `[Unit]
 Description=Sorema agent
 After=network-online.target
@@ -125,7 +129,8 @@ function planScheduledTask(executable: string, argv: readonly string[], home: st
   return {
     label: 'Sorema Agent',
     path,
-    contents: `<?xml version="1.0" encoding="UTF-8"?>
+    encoding: 'utf16le',
+    contents: `﻿<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>Sorema agent</Description>
@@ -248,7 +253,7 @@ export function installService(plan: ServicePlan, runner: Runner = run): void {
     }
   }
   mkdirSync(dirname(plan.path), { recursive: true });
-  writeFileSync(plan.path, plan.contents, { encoding: 'utf8', mode: 0o600 });
+  writeFileSync(plan.path, plan.contents, { encoding: plan.encoding, mode: 0o600 });
   // Rewritten explicitly: an existing file keeps the mode it already had.
   chmodSync(plan.path, 0o600);
   for (const command of plan.activate) runner(command);
