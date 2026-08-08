@@ -24,6 +24,8 @@ export type ServicePlan = {
   /** Run first, and allowed to fail: clearing a previous install that may not exist. */
   prepare: readonly (readonly string[])[];
   activate: readonly (readonly string[])[];
+  /** Asks the service manager whether it knows about this, which a file on disk does not answer. */
+  verify: readonly string[];
   deactivate: readonly (readonly string[])[];
   describe: string;
 };
@@ -67,6 +69,7 @@ ${programArguments}
 </dict>
 </plist>
 `,
+    verify: ['launchctl', 'print', `gui/${process.getuid?.() ?? 0}/${LABEL}`],
     prepare: [['launchctl', 'bootout', `gui/${process.getuid?.() ?? 0}`, path]],
     activate: [['launchctl', 'bootstrap', `gui/${process.getuid?.() ?? 0}`, path]],
     deactivate: [['launchctl', 'bootout', `gui/${process.getuid?.() ?? 0}`, path]],
@@ -102,6 +105,7 @@ NoNewPrivileges=true
 [Install]
 WantedBy=default.target
 `,
+    verify: ['systemctl', '--user', 'is-enabled', 'sorema.service'],
     prepare: [],
     activate: [
       ['systemctl', '--user', 'daemon-reload'],
@@ -160,6 +164,7 @@ function planScheduledTask(executable: string, argv: readonly string[], home: st
   </Actions>
 </Task>
 `,
+    verify: ['schtasks', '/Query', '/TN', 'Sorema Agent'],
     prepare: [],
     activate: [['schtasks', '/Create', '/TN', 'Sorema Agent', '/XML', path, '/F']],
     deactivate: [['schtasks', '/Delete', '/TN', 'Sorema Agent', '/F']],
@@ -240,8 +245,20 @@ export function installGlobally(version: string, runner: Runner = run): string |
   }
 }
 
-export function isServiceInstalled(plan: ServicePlan): boolean {
-  return existsSync(plan.path);
+/**
+ * Whether the service manager actually knows about this service.
+ *
+ * Deliberately not `existsSync(plan.path)`. A failed registration leaves the definition file behind,
+ * and a file on disk then reads as "installed" while nothing runs — which is how a machine came to
+ * report itself connected with no agent on it at all. Only the manager can answer this.
+ */
+export function isServiceInstalled(plan: ServicePlan, runner: Runner = run): boolean {
+  try {
+    runner(plan.verify);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function installService(plan: ServicePlan, runner: Runner = run): void {
@@ -256,7 +273,13 @@ export function installService(plan: ServicePlan, runner: Runner = run): void {
   writeFileSync(plan.path, plan.contents, { encoding: plan.encoding, mode: 0o600 });
   // Rewritten explicitly: an existing file keeps the mode it already had.
   chmodSync(plan.path, 0o600);
-  for (const command of plan.activate) runner(command);
+  try {
+    for (const command of plan.activate) runner(command);
+  } catch (error) {
+    // Leaving the definition behind would make the next run believe the service exists.
+    if (existsSync(plan.path)) rmSync(plan.path);
+    throw error;
+  }
 }
 
 export function uninstallService(plan: ServicePlan, runner: Runner = run): void {

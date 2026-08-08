@@ -6,6 +6,7 @@ import {
   findRottingPath,
   installGlobally,
   installService,
+  isServiceInstalled,
   planService,
   uninstallService,
 } from '../src/service.js';
@@ -190,5 +191,34 @@ describe('installing and removing', () => {
     }
     expect(invocation).toContain('install');
     expect(invocation).toContain('sorema@9.9.9');
+  });
+
+  it('asks the service manager, not the filesystem, whether it is installed', () => {
+    const home = mkdtempSync(join(tmpdir(), 'sorema-installed-'));
+    const plan = planService(NODE, [SCRIPT, 'start'], 'win32', home);
+    installService(plan, () => {});
+
+    // The file exists and the service does not: exactly the state a failed registration leaves, and
+    // the state that had a machine reporting itself connected with no agent running on it.
+    expect(existsSync(plan.path)).toBe(true);
+    expect(
+      isServiceInstalled(plan, () => {
+        throw new Error('ERROR: The system cannot find the file specified.');
+      }),
+    ).toBe(false);
+    expect(isServiceInstalled(plan, () => {})).toBe(true);
+  });
+
+  it('clears the definition when registering it fails', () => {
+    const home = mkdtempSync(join(tmpdir(), 'sorema-failed-'));
+    const plan = planService(NODE, [SCRIPT, 'start'], 'linux', home);
+
+    expect(() =>
+      installService(plan, (command) => {
+        if (command.includes('enable')) throw new Error('refused');
+      }),
+    ).toThrow();
+    // Left behind, the next run would take it for a working install.
+    expect(existsSync(plan.path)).toBe(false);
   });
 });
