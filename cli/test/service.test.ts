@@ -2,7 +2,13 @@ import { existsSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { findRottingPath, installService, planService, uninstallService } from '../src/service.js';
+import {
+  findRottingPath,
+  installGlobally,
+  installService,
+  planService,
+  uninstallService,
+} from '../src/service.js';
 
 const HOME = '/home/gabriele';
 const NODE = '/usr/bin/node';
@@ -164,5 +170,20 @@ describe('installing and removing', () => {
       expect(Array.isArray(command)).toBe(true);
       expect(command.join(' ')).not.toContain('&&');
     }
+  });
+
+  it('never asks the operating system to run a bare npm on windows', () => {
+    const commands: (readonly string[])[] = [];
+
+    installGlobally('9.9.9', (command) => commands.push(command));
+
+    const [invocation] = commands;
+    // `npm` on Windows is a batch file, which execFile cannot run: it fails before producing any
+    // output, so the failure arrives with nothing to explain it.
+    if (process.platform === 'win32') {
+      expect(invocation?.[0]).not.toBe('npm');
+    }
+    expect(invocation).toContain('install');
+    expect(invocation).toContain('sorema@9.9.9');
   });
 });

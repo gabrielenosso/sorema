@@ -200,6 +200,20 @@ export function findRottingPath(executable: string, argv: readonly string[]): st
 export type Runner = (command: readonly string[]) => void;
 
 /**
+ * How to invoke npm without a shell.
+ *
+ * On Windows `npm` is `npm.cmd`, a batch file, and Node cannot execute one directly — `execFile`
+ * fails before the program ever runs, which is why the error carried no output at all. Running npm's
+ * own JavaScript entry point through the Node that is already executing avoids both the batch file
+ * and the shell that would otherwise be needed to read it.
+ */
+function npmCommand(): string[] {
+  if (platform() !== 'win32') return ['npm'];
+  const cli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  return existsSync(cli) ? [process.execPath, cli] : ['npm.cmd'];
+}
+
+/**
  * Installs this command properly, so the service can point at something that lasts.
  *
  * Running from an `npx` cache is fine for trying it; it is not fine for a service, because npm is
@@ -208,9 +222,12 @@ export type Runner = (command: readonly string[]) => void;
  * program that installs itself without mentioning it is a program nobody should run.
  */
 export function installGlobally(version: string, runner: Runner = run): string | null {
-  runner(['npm', 'install', '--global', `sorema@${version}`]);
+  runner([...npmCommand(), 'install', '--global', `sorema@${version}`]);
   try {
-    const root = execFileSync('npm', ['root', '--global'], { encoding: 'utf8' }).trim();
+    const [program, ...prefix] = npmCommand();
+    const root = execFileSync(program ?? 'npm', [...prefix, 'root', '--global'], {
+      encoding: 'utf8',
+    }).trim();
     const script = join(root, 'sorema', 'dist', 'sorema.mjs');
     return existsSync(script) ? script : null;
   } catch {
