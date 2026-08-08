@@ -134,7 +134,7 @@ function planScheduledTask(executable: string, argv: readonly string[], home: st
     label: 'Sorema Agent',
     path,
     encoding: 'utf16le',
-    contents: `﻿<?xml version="1.0" encoding="UTF-16"?>
+    contents: `\uFEFF<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>Sorema agent</Description>
