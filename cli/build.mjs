@@ -23,7 +23,23 @@ await build({
   target: 'node22',
   format: 'esm',
   outfile: 'dist/sorema.mjs',
-  banner: { js: '#!/usr/bin/env node' },
+  banner: {
+    // An ESM bundle has no `require`, so any CommonJS dependency reaching for one dies at load with
+    // "Dynamic require of \"fs\" is not supported" — and it dies wherever that dependency is first
+    // touched, which here was the agent's storage layer, so only `sorema start` failed. Giving the
+    // bundle a real `require` built from its own URL is the supported way out.
+    js: [
+      '#!/usr/bin/env node',
+      "import { createRequire } from 'node:module';",
+      'const require = createRequire(import.meta.url);',
+      // `__dirname` and `__filename` do not exist in ESM either, and a dependency that reads one
+      // fails at the moment it is touched rather than at load. Same class of defect, same cure.
+      "import { fileURLToPath } from 'node:url';",
+      "import { dirname as __pathDirname } from 'node:path';",
+      'const __filename = fileURLToPath(import.meta.url);',
+      'const __dirname = __pathDirname(__filename);',
+    ].join('\n'),
+  },
   external: ['better-sqlite3'],
   define,
 });

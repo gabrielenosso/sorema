@@ -17,7 +17,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.5.2';
+const VERSION = '0.6.0';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -52,6 +52,9 @@ function applyDefaults(): void {
   process.env.SOREMA_DEVICE_NAME ??= `${hostname()} (${platform()})`;
   // Off by default: somebody who installed this wants it to do the work, not to mime it.
   process.env.SOREMA_DEMO_MODE ??= 'false';
+  // The published command is production. Left unset, the logger reaches for a pretty-printing
+  // transport it resolves by module path at run time, which a single-file bundle cannot satisfy.
+  process.env.NODE_ENV ??= 'production';
 }
 
 async function main(): Promise<number> {
