@@ -17,7 +17,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.7.0';
+const VERSION = '0.7.1';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -47,9 +47,12 @@ function stateDirectory(): string {
 function applyDefaults(): void {
   if (DEFAULT_API_URL) process.env.SOREMA_API_URL ??= DEFAULT_API_URL;
   if (DEFAULT_TUNNEL_URL) process.env.SOREMA_TUNNEL_URL ??= DEFAULT_TUNNEL_URL;
-  process.env.SOREMA_STATE_DIR ??= stateDirectory();
-  process.env.SOREMA_DATABASE_URL ??= `file:${join(stateDirectory(), 'sorema.sqlite')}`;
-  process.env.SOREMA_DEVICE_NAME ??= `${hostname()} (${platform()})`;
+  // The names the agent's configuration actually reads. Setting anything else means the CLI stores
+  // an identity in one directory while the agent looks for it in another, and the two answer the
+  // same question differently: `status` says paired, `start` says it is not.
+  process.env.LOCAL_AGENT_STATE_DIR ??= stateDirectory();
+  process.env.LOCAL_AGENT_DATABASE_URL ??= `file:${join(stateDirectory(), 'sorema.sqlite')}`;
+  process.env.LOCAL_AGENT_DEVICE_NAME ??= `${hostname()} (${platform()})`;
   // Off by default: somebody who installed this wants it to do the work, not to mime it.
   process.env.SOREMA_DEMO_MODE ??= 'false';
   // The published command is production. Left unset, the logger reaches for a pretty-printing

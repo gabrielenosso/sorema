@@ -28,8 +28,8 @@ function run(args: readonly string[], timeoutMs = 20_000) {
       ...process.env,
       SOREMA_API_URL: 'https://example.invalid',
       SOREMA_TUNNEL_URL: 'wss://example.invalid',
-      SOREMA_STATE_DIR: state,
-      SOREMA_DATABASE_URL: `file:${join(state, 'sorema.sqlite')}`,
+      LOCAL_AGENT_STATE_DIR: state,
+      LOCAL_AGENT_DATABASE_URL: `file:${join(state, 'sorema.sqlite')}`,
     },
   });
 }
@@ -66,5 +66,16 @@ describe.skipIf(!existsSync(BUNDLE))('the built command runs outside this test r
     // milliseconds; a working agent stays up until the timeout kills it. Asserting on log lines
     // instead is fragile, because the process dies before its logger flushes.
     expect(ranForMs).toBeGreaterThan(5_000);
+  });
+
+  it('lets the command and the agent read the same identity', () => {
+    // They read different environment variables for a while, so `status` reported the machine paired
+    // while `start` reported it was not, and the service exited 1 every time it ran.
+    const both = run(['status']);
+    const started = run(['start'], 8_000);
+
+    const saysPaired = both.stdout.includes('Paired as');
+    const agentSaysUnpaired = `${started.stdout}${started.stderr}`.includes('not paired yet');
+    expect(saysPaired && agentSaysUnpaired).toBe(false);
   });
 });
