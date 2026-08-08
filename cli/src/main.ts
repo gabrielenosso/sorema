@@ -17,6 +17,8 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
+const VERSION = '0.4.0';
+
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
   sorema <CODE>              Do everything: pair, install, connect. Run it again any time.
@@ -77,12 +79,12 @@ async function main(): Promise<number> {
   // out what is missing and does only that, so running it twice costs nothing.
   const looksLikeCode = command !== undefined && /^[0-9a-fA-F]{8}$/.test(command);
   if (!command || looksLikeCode) {
-    const { planService, installService, isServiceInstalled, findRottingPath } =
+    const { planService, installService, isServiceInstalled, findRottingPath, installGlobally } =
       await import('./service.js');
     const { planSetup } = await import('./setup.js');
 
-    const argv = [process.argv[1], 'start'].filter((value): value is string => Boolean(value));
-    const plan = planService(process.execPath, argv);
+    let argv = [process.argv[1], 'start'].filter((value): value is string => Boolean(value));
+    let plan = planService(process.execPath, argv);
     const steps = planSetup({
       paired: identity.isPaired,
       code: looksLikeCode ? command : null,
@@ -101,6 +103,20 @@ async function main(): Promise<number> {
           String(process.env.SOREMA_DEVICE_NAME),
         );
         process.stdout.write(`Paired as ${paired.deviceId}.\n`);
+      }
+      if (step.action === 'install-globally') {
+        const durable = installGlobally(VERSION);
+        if (!durable) {
+          process.stdout.write(
+            'Could not install it globally, so it will run here instead.\nLeave this window open.\n',
+          );
+          const { runAgent } = await import('../../apps/local-agent/src/run.js');
+          await runAgent();
+          return 0;
+        }
+        // The service must point at the copy that will still be there, not at the one running now.
+        argv = [durable, 'start'];
+        plan = planService(process.execPath, argv);
       }
       if (step.action === 'install-service') {
         installService(plan);

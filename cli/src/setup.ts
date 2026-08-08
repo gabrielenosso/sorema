@@ -16,6 +16,7 @@ export type MachineState = {
 
 export type SetupStep =
   | { action: 'pair'; code: string }
+  | { action: 'install-globally' }
   | { action: 'install-service' }
   | { action: 'run-in-foreground' }
   | { action: 'already-running' }
@@ -42,13 +43,9 @@ export function planSetup(state: MachineState): SetupStep[] {
   if (state.rottingPath) {
     steps.push({
       action: 'explain',
-      message:
-        `Staying in the foreground: ${state.rottingPath}.\n` +
-        'A service pointing there stops working without saying so. To have it start on its own:\n\n' +
-        '  npm install -g sorema\n  sorema\n',
+      message: `Installing sorema properly first, because ${state.rottingPath}.`,
     });
-    steps.push({ action: 'run-in-foreground' });
-    return steps;
+    steps.push({ action: 'install-globally' });
   }
 
   if (!state.serviceInstalled) steps.push({ action: 'install-service' });

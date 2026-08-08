@@ -51,8 +51,13 @@ describe('working out what a machine still needs', () => {
       rottingPath: 'the npx cache',
     });
 
-    expect(steps.map((step) => step.action)).toEqual(['explain', 'run-in-foreground']);
-    expect(steps.some((step) => step.action === 'install-service')).toBe(false);
+    // It installs itself somewhere durable rather than sending the reader off to do it.
+    expect(steps.map((step) => step.action)).toEqual([
+      'explain',
+      'install-globally',
+      'install-service',
+      'already-running',
+    ]);
   });
 
   it('still pairs before falling back to the foreground', () => {
@@ -64,6 +69,6 @@ describe('working out what a machine still needs', () => {
     });
 
     expect(steps[0]?.action).toBe('pair');
-    expect(steps.at(-1)?.action).toBe('run-in-foreground');
+    expect(steps.map((step) => step.action)).toContain('install-globally');
   });
 });

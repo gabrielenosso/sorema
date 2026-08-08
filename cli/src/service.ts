@@ -199,6 +199,25 @@ export function findRottingPath(executable: string, argv: readonly string[]): st
 
 export type Runner = (command: readonly string[]) => void;
 
+/**
+ * Installs this command properly, so the service can point at something that lasts.
+ *
+ * Running from an `npx` cache is fine for trying it; it is not fine for a service, because npm is
+ * free to clear that directory and the agent would then simply never start again, silently. Rather
+ * than send the reader away to run a second command, the first one does it — and says so, because a
+ * program that installs itself without mentioning it is a program nobody should run.
+ */
+export function installGlobally(version: string, runner: Runner = run): string | null {
+  runner(['npm', 'install', '--global', `sorema@${version}`]);
+  try {
+    const root = execFileSync('npm', ['root', '--global'], { encoding: 'utf8' }).trim();
+    const script = join(root, 'sorema', 'dist', 'sorema.mjs');
+    return existsSync(script) ? script : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isServiceInstalled(plan: ServicePlan): boolean {
   return existsSync(plan.path);
 }
