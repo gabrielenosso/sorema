@@ -17,7 +17,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.5.1';
+const VERSION = '0.5.2';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -123,7 +123,11 @@ async function main(): Promise<number> {
         process.stdout.write(`Running under ${plan.describe}. Nothing else to start.\n`);
       }
       if (step.action === 'already-running') {
-        process.stdout.write('This machine is connected. Go and talk to it.\n');
+        // Deliberately not "connected": nothing here has watched a socket open. Saying it and being
+        // wrong is what made the last three attempts look like successes.
+        process.stdout.write(
+          'Sorema is running here. The web app shows a green dot once it has connected.\n',
+        );
       }
       if (step.action === 'run-in-foreground') {
         const { runAgent } = await import('../../apps/local-agent/src/run.js');

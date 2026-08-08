@@ -166,7 +166,13 @@ function planScheduledTask(executable: string, argv: readonly string[], home: st
 `,
     verify: ['schtasks', '/Query', '/TN', 'Sorema Agent'],
     prepare: [],
-    activate: [['schtasks', '/Create', '/TN', 'Sorema Agent', '/XML', path, '/F']],
+    activate: [
+      ['schtasks', '/Create', '/TN', 'Sorema Agent', '/XML', path, '/F'],
+      // Creating a task does not run it, and the trigger is the next logon. Without this the
+      // machine sits registered and offline until the user happens to sign out, which reads as the
+      // install having done nothing.
+      ['schtasks', '/Run', '/TN', 'Sorema Agent'],
+    ],
     deactivate: [['schtasks', '/Delete', '/TN', 'Sorema Agent', '/F']],
     describe: 'Task Scheduler, starting when you log in',
   };
