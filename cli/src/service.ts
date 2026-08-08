@@ -181,7 +181,10 @@ function planScheduledTask(executable: string, argv: readonly string[], home: st
 function windowsUser(): string {
   const domain = process.env.USERDOMAIN;
   const user = process.env.USERNAME ?? '';
-  return domain ? `${domain}\${user}` : user;
+  // Joined with a literal backslash, which is what Windows means by DOMAIN\user. Written this way
+  // rather than escaped inside the template, where a stray backslash silently turns `${user}` into
+  // the four characters instead of the name and the task is registered for a user nobody has.
+  return domain ? [domain, user].join('\\') : user;
 }
 
 /**

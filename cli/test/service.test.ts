@@ -221,4 +221,24 @@ describe('installing and removing', () => {
     // Left behind, the next run would take it for a working install.
     expect(existsSync(plan.path)).toBe(false);
   });
+
+  it('names a real windows account, not the template that should have produced one', () => {
+    const previousDomain = process.env.USERDOMAIN;
+    const previousUser = process.env.USERNAME;
+    process.env.USERDOMAIN = 'DESKTOP-ABC';
+    process.env.USERNAME = 'gabriele';
+    try {
+      const plan = planService(NODE, [SCRIPT, 'start'], 'win32', HOME);
+
+      // schtasks answers "No mapping between account names and security IDs" when the identity is
+      // not a real account, which is what an uninterpolated template produces.
+      expect(plan.contents).toContain(['DESKTOP-ABC', 'gabriele'].join('\\'));
+      expect(plan.contents).not.toContain('${');
+    } finally {
+      if (previousDomain === undefined) delete process.env.USERDOMAIN;
+      else process.env.USERDOMAIN = previousDomain;
+      if (previousUser === undefined) delete process.env.USERNAME;
+      else process.env.USERNAME = previousUser;
+    }
+  });
 });
