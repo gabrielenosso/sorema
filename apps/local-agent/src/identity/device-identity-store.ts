@@ -25,6 +25,26 @@ export class DeviceIdentityStore {
     this.identity = this.loadOrCreate();
   }
 
+  /**
+   * Forgets which account this machine belongs to, and generates a fresh key.
+   *
+   * Pairing again means joining a different account, and the old key is one no server will
+   * recognise. Keeping it would leave the machine believing it is paired while the account it claims
+   * cannot see it — which is exactly what a rebuilt user pool leaves behind.
+   */
+  reset(): void {
+    const keyPair = generateDeviceKeyPair();
+    const fresh = {
+      deviceId: null,
+      userId: null,
+      createdAt: new Date().toISOString(),
+      publicKeyPem: keyPair.publicKeyPem,
+      privateKeyPem: keyPair.privateKeyPem,
+    };
+    this.identity = fresh;
+    this.persist(fresh);
+  }
+
   private loadOrCreate(): DeviceIdentity {
     if (existsSync(this.filePath)) {
       const parsed = identityFileSchema.safeParse(

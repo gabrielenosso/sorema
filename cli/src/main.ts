@@ -17,7 +17,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -55,6 +55,33 @@ function applyDefaults(): void {
   // The published command is production. Left unset, the logger reaches for a pretty-printing
   // transport it resolves by module path at run time, which a single-file bundle cannot satisfy.
   process.env.NODE_ENV ??= 'production';
+}
+
+/**
+ * Asks before moving this machine to a different account.
+ *
+ * Without a terminal there is nobody to ask, so it refuses rather than guessing — a service or a
+ * script re-pairing a machine on its own is how a working setup disappears without anyone deciding.
+ */
+async function confirmRepairing(deviceId: string): Promise<boolean> {
+  process.stdout.write(
+    `This machine is already paired, as ${deviceId}.\n` +
+      'Pairing again moves it to whichever account this code belongs to, and it stops answering ' +
+      'for the old one.\n',
+  );
+  if (!process.stdin.isTTY) {
+    process.stdout.write('Run it again from a terminal to confirm.\n');
+    return false;
+  }
+
+  const { createInterface } = await import('node:readline/promises');
+  const question = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await question.question('Move it? [y/N] ');
+    return answer.trim().toLowerCase().startsWith('y');
+  } finally {
+    question.close();
+  }
 }
 
 async function main(): Promise<number> {
@@ -98,6 +125,14 @@ async function main(): Promise<number> {
     for (const step of steps) {
       if (step.action === 'explain') process.stdout.write(`${step.message}\n`);
       if (step.action === 'pair') {
+        // Asked, not assumed. Re-pairing moves this machine to another account and throws away the
+        // key it answers with, so it is not something to do quietly because a code was typed.
+        if (identity.isPaired && !(await confirmRepairing(identity.deviceId ?? ''))) {
+          process.stdout.write('Left as it is.\n');
+          return 0;
+        }
+        // The old key is one no server will recognise once the account changes.
+        if (identity.isPaired) identity.reset();
         const { pairWithCode } = await import('../../apps/local-agent/src/tunnel/cloud-pairing.js');
         const paired = await pairWithCode(
           String(process.env.SOREMA_API_URL),

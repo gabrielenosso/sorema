@@ -31,10 +31,12 @@ describe('working out what a machine still needs', () => {
     expect(steps.map((step) => step.action)).toEqual(['already-running']);
   });
 
-  it('ignores a code on a machine that is already paired', () => {
+  it('acts on a code even when this machine believes it is already paired', () => {
+    // Its identity file can name an account that no longer exists. Somebody typing a fresh code is
+    // stating which account this machine belongs to, and the command asks before moving it.
     const steps = planSetup({ paired: true, code: 'A1B2C3D4', serviceInstalled: true, ...DURABLE });
 
-    expect(steps.some((step) => step.action === 'pair')).toBe(false);
+    expect(steps.some((step) => step.action === 'pair')).toBe(true);
   });
 
   it('installs the service on a paired machine that never got one', () => {

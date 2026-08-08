@@ -35,7 +35,11 @@ export function planSetup(state: MachineState): SetupStep[] {
   }
 
   const steps: SetupStep[] = [];
-  if (!state.paired && state.code) steps.push({ action: 'pair', code: state.code });
+  // A code given explicitly wins over what this machine believes about itself. Its identity file can
+  // name an account that no longer exists — a rebuilt user pool leaves exactly that — and then the
+  // machine reports itself paired while the account it claims cannot see it. Somebody typing a fresh
+  // code is saying which account this machine belongs to, and that is the more recent truth.
+  if (state.code) steps.push({ action: 'pair', code: state.code });
 
   // A service is the whole point of a single command: after this, nothing has to be run again. When
   // the paths would not survive — an npx cache, a Node that moves with the version manager — the
