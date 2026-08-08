@@ -17,7 +17,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.7.2';
+const VERSION = '0.7.3';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -39,7 +39,9 @@ The private key that identifies this machine is generated here and never leaves.
  * paired again, with the old registration left behind.
  */
 function stateDirectory(): string {
-  const directory = join(homedir(), '.sorema');
+  // Resolved once, from the same variable the agent reads. Hardcoding the home directory here is
+  // what made `status` and `start` answer the same question differently.
+  const directory = process.env.LOCAL_AGENT_STATE_DIR ?? join(homedir(), '.sorema');
   mkdirSync(directory, { recursive: true });
   return directory;
 }
@@ -55,9 +57,11 @@ function applyDefaults(): void {
   process.env.LOCAL_AGENT_DEVICE_NAME ??= `${hostname()} (${platform()})`;
   // Off by default: somebody who installed this wants it to do the work, not to mime it.
   process.env.SOREMA_DEMO_MODE ??= 'false';
-  // The published command is production. Left unset, the logger reaches for a pretty-printing
-  // transport it resolves by module path at run time, which a single-file bundle cannot satisfy.
-  process.env.NODE_ENV ??= 'production';
+  // Forced, not defaulted. The logger picks a pretty-printing transport whenever this is not
+  // 'production', and that transport is resolved by module path, which a single file cannot
+  // satisfy, so the command dies in 400ms. Plenty of people export NODE_ENV=development in their
+  // shell, and their environment must not decide whether our own bundle can start.
+  process.env.NODE_ENV = 'production';
 }
 
 /**
@@ -110,7 +114,13 @@ async function main(): Promise<number> {
 
   // Everything, in one command: `sorema` on its own, or `sorema <CODE>` the first time. It works
   // out what is missing and does only that, so running it twice costs nothing.
-  const looksLikeCode = command !== undefined && /^[0-9a-fA-F]{8}$/.test(command);
+  //
+  // Deliberately wider than the format the service issues today. Two pairing-code alphabets exist
+  // in this codebase and only one is live, so a validator matching exactly the live one would
+  // silently reject every code the day the other became live, and the symptom would be the command
+  // claiming there is no such command. Anything that could be a code is sent, and the service
+  // decides. It is the only half that knows.
+  const looksLikeCode = command !== undefined && /^[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}$/.test(command);
   if (!command || looksLikeCode) {
     const { planService, installService, isServiceInstalled, findRottingPath, installGlobally } =
       await import('./service.js');
@@ -120,7 +130,7 @@ async function main(): Promise<number> {
     let plan = planService(process.execPath, argv);
     const steps = planSetup({
       paired: identity.isPaired,
-      code: looksLikeCode ? command : null,
+      code: looksLikeCode ? command.replace('-', '').toUpperCase() : null,
       rottingPath: findRottingPath(process.execPath, argv),
       serviceInstalled: isServiceInstalled(plan),
     });
@@ -134,16 +144,23 @@ async function main(): Promise<number> {
           process.stdout.write('Left as it is.\n');
           return 0;
         }
-        // The old key is one no server will recognise once the account changes.
+        // Kept until the move succeeds. Discarding the key first meant a mistyped or expired code
+        // left the machine paired to nothing: the old identity gone, the new one never accepted.
+        const previous = identity.snapshot();
         if (identity.isPaired) identity.reset();
         const { pairWithCode } = await import('../../apps/local-agent/src/tunnel/cloud-pairing.js');
-        const paired = await pairWithCode(
-          String(process.env.SOREMA_API_URL),
-          step.code,
-          identity,
-          String(process.env.LOCAL_AGENT_DEVICE_NAME),
-        );
-        process.stdout.write(`Paired as ${paired.deviceId}.\n`);
+        try {
+          const paired = await pairWithCode(
+            String(process.env.SOREMA_API_URL),
+            step.code,
+            identity,
+            String(process.env.LOCAL_AGENT_DEVICE_NAME),
+          );
+          process.stdout.write(`Paired as ${paired.deviceId}.\n`);
+        } catch (error) {
+          identity.restore(previous);
+          throw error;
+        }
       }
       if (step.action === 'install-globally') {
         const durable = installGlobally(VERSION);

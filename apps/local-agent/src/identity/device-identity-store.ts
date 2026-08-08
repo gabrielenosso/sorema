@@ -45,6 +45,16 @@ export class DeviceIdentityStore {
     this.persist(fresh);
   }
 
+  /** A copy to put back if what comes next fails. */
+  snapshot(): DeviceIdentity {
+    return { ...this.identity };
+  }
+
+  restore(identity: DeviceIdentity): void {
+    this.identity = identity;
+    this.persist(identity);
+  }
+
   private loadOrCreate(): DeviceIdentity {
     if (existsSync(this.filePath)) {
       const parsed = identityFileSchema.safeParse(

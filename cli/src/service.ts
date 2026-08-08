@@ -241,8 +241,11 @@ function npmCommand(): string[] {
  * program that installs itself without mentioning it is a program nobody should run.
  */
 export function installGlobally(version: string, runner: Runner = run): string | null {
-  runner([...npmCommand(), 'install', '--global', `sorema@${version}`]);
+  // Inside the try, not above it. A global install fails for ordinary reasons — no permission on
+  // the prefix, no network, a registry behind a proxy — and every one of them threw straight past
+  // the caller's fallback, so instead of running in the foreground the command simply died.
   try {
+    runner([...npmCommand(), 'install', '--global', `sorema@${version}`]);
     const [program, ...prefix] = npmCommand();
     const root = execFileSync(program ?? 'npm', [...prefix, 'root', '--global'], {
       encoding: 'utf8',

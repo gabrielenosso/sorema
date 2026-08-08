@@ -16,8 +16,13 @@ export async function pairWithCode(
   deviceName: string,
   fetchImplementation: typeof fetch = fetch,
 ): Promise<PairingResult> {
-  const trimmed = code.trim().toUpperCase();
-  if (!/^[0-9A-F]{8}$/.test(trimmed)) {
+  // Separators stripped, because the browser shows some codes grouped and nobody retypes a code
+  // without its dash. The check that follows is a length and shape check only: this repository
+  // holds two pairing-code alphabets, and a client that insisted on one of them would turn away
+  // every code the day the other went live. Whether a code is real is the service's answer, not
+  // ours — all this catches is a typo, before it costs a round trip.
+  const trimmed = code.trim().replace(/[\s-]/g, '').toUpperCase();
+  if (!/^[0-9A-Z]{8}$/.test(trimmed)) {
     throw new Error('a pairing code is eight characters, as shown in the browser');
   }
 

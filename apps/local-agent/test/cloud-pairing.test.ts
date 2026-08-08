@@ -64,11 +64,27 @@ describe('pairing this machine with a code from the browser', () => {
     expect(fetchImplementation.mock.calls[0]?.[1]?.headers.authorization).toBe('Bearer A1B2C3D4');
   });
 
+  it.each(['6D246143', 'KQZM-W7PT', 'kqzmw7pt'])('sends both alphabets to the server (%s)', async (code) => {
+    const { identity } = fakeIdentity();
+    const fetchImplementation = vi
+      .fn()
+      .mockResolvedValue(reply(201, { deviceId: 'device-1', userId: 'user-1' }));
+
+    await pairWithCode('https://api.example', code, identity, 'a machine', fetchImplementation);
+
+    const [, init] = fetchImplementation.mock.calls[0] ?? [];
+    expect(String(init.headers.authorization)).toMatch(/^Bearer [0-9A-Z]{8}$/);
+  });
+
   it.each([
     ['too short', 'A1B2'],
-    ['not hexadecimal', 'ZZZZZZZZ'],
+    ['punctuated', 'A1B2*C3D'],
     ['empty', ''],
   ])('refuses a code that is %s without asking the server', async (_case, code) => {
+    // Note what is missing: no case here rejects a code for using the wrong letters. This test used
+    // to demand hexadecimal, which is one of the two alphabets in this repository, and a client
+    // enforcing one of them turns away every code the day the other goes live. Length and shape are
+    // ours to check; the alphabet belongs to whoever issues the codes.
     const fetchImplementation = vi.fn();
 
     await expect(
