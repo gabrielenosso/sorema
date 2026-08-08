@@ -199,6 +199,10 @@ export function findRottingPath(executable: string, argv: readonly string[]): st
 
 export type Runner = (command: readonly string[]) => void;
 
+export function isServiceInstalled(plan: ServicePlan): boolean {
+  return existsSync(plan.path);
+}
+
 export function installService(plan: ServicePlan, runner: Runner = run): void {
   for (const command of plan.prepare) {
     try {

@@ -19,6 +19,7 @@ const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
+  sorema <CODE>              Do everything: pair, install, connect. Run it again any time.
   sorema pair <CODE>         Claim the code shown in the web app. Once per machine.
   sorema start               Stay connected. Leave it running.
   sorema service install     Start on its own whenever you log in.
@@ -63,14 +64,58 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  if (!command || command === 'help' || command === '--help') {
+  if (command === 'help' || command === '--help') {
     process.stdout.write(USAGE);
-    return command ? 0 : 1;
+    return 0;
   }
 
   const { DeviceIdentityStore } =
     await import('../../apps/local-agent/src/identity/device-identity-store.js');
   const identity = new DeviceIdentityStore(stateDirectory());
+
+  // Everything, in one command: `sorema` on its own, or `sorema <CODE>` the first time. It works
+  // out what is missing and does only that, so running it twice costs nothing.
+  const looksLikeCode = command !== undefined && /^[0-9a-fA-F]{8}$/.test(command);
+  if (!command || looksLikeCode) {
+    const { planService, installService, isServiceInstalled, findRottingPath } =
+      await import('./service.js');
+    const { planSetup } = await import('./setup.js');
+
+    const argv = [process.argv[1], 'start'].filter((value): value is string => Boolean(value));
+    const plan = planService(process.execPath, argv);
+    const steps = planSetup({
+      paired: identity.isPaired,
+      code: looksLikeCode ? command : null,
+      rottingPath: findRottingPath(process.execPath, argv),
+      serviceInstalled: isServiceInstalled(plan),
+    });
+
+    for (const step of steps) {
+      if (step.action === 'explain') process.stdout.write(`${step.message}\n`);
+      if (step.action === 'pair') {
+        const { pairWithCode } = await import('../../apps/local-agent/src/tunnel/cloud-pairing.js');
+        const paired = await pairWithCode(
+          String(process.env.SOREMA_API_URL),
+          step.code,
+          identity,
+          String(process.env.SOREMA_DEVICE_NAME),
+        );
+        process.stdout.write(`Paired as ${paired.deviceId}.\n`);
+      }
+      if (step.action === 'install-service') {
+        installService(plan);
+        process.stdout.write(`Running under ${plan.describe}. Nothing else to start.\n`);
+      }
+      if (step.action === 'already-running') {
+        process.stdout.write('This machine is connected. Go and talk to it.\n');
+      }
+      if (step.action === 'run-in-foreground') {
+        const { runAgent } = await import('../../apps/local-agent/src/run.js');
+        await runAgent();
+      }
+    }
+    return steps.some((step) => step.action === 'explain' && !identity.isPaired) ? 1 : 0;
+  }
 
   if (command === 'status') {
     process.stdout.write(
