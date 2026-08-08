@@ -115,15 +115,33 @@ async function main(): Promise<number> {
   }
 
   if (command === 'service') {
-    const { planService, installService, uninstallService } = await import('./service.js');
+    const { planService, installService, uninstallService, findRottingPath } =
+      await import('./service.js');
     // Resolved now rather than written as `npx sorema`: `process.execPath` is the node binary and
     // argv[1] this script, so the service points at files that exist instead of at a temporary
     // directory npm is free to clear.
-    const plan = planService(process.execPath, [process.argv[1] ?? '', 'start']);
+    const plan = planService(
+      process.execPath,
+      [process.argv[1], 'start'].filter((value): value is string => Boolean(value)),
+    );
 
     if (argument === 'install') {
       if (!identity.isPaired) {
         process.stderr.write('Pair this machine first: sorema pair <CODE>\n');
+        return 1;
+      }
+      const rotting = findRottingPath(process.execPath, [process.argv[1] ?? '']);
+      if (rotting) {
+        process.stderr.write(
+          `Not installing: ${rotting}.
+A service pointing there stops working without saying so. ` +
+            `Install it properly first:
+
+  npm install -g sorema
+
+then run sorema service install again.
+`,
+        );
         return 1;
       }
       installService(plan);

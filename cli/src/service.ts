@@ -174,10 +174,35 @@ function windowsUser(): string {
   return domain ? `${domain}\${user}` : user;
 }
 
-export function installService(plan: ServicePlan): void {
+/**
+ * Paths that will not still be there.
+ *
+ * A service definition is written once and read for years, so it must not point into somewhere its
+ * owner treats as disposable. An `npx` run lives in a cache npm clears; a Node from nvm, fnm or
+ * Volta moves when the user installs another version. Either way the agent stops starting and says
+ * nothing — it is simply never there again, which is the worst way for this to fail.
+ */
+export function findRottingPath(executable: string, argv: readonly string[]): string | null {
+  const disposable = [
+    { pattern: /[\\/]_npx[\\/]/, why: 'the npx cache, which npm clears' },
+    { pattern: /[\\/]\.nvm[\\/]/, why: 'an nvm install, which moves between Node versions' },
+    { pattern: /[\\/](\.fnm|fnm_multishells)[\\/]/, why: 'an fnm shell, which is temporary' },
+    { pattern: /[\\/]\.volta[\\/]/, why: 'a Volta install, which moves between Node versions' },
+  ];
+  for (const candidate of [executable, ...argv]) {
+    for (const { pattern, why } of disposable) {
+      if (pattern.test(candidate)) return `${candidate} lives in ${why}`;
+    }
+  }
+  return null;
+}
+
+export type Runner = (command: readonly string[]) => void;
+
+export function installService(plan: ServicePlan, runner: Runner = run): void {
   for (const command of plan.prepare) {
     try {
-      run(command);
+      runner(command);
     } catch {
       // Clearing an install that was never there is the state asked for, not a failure.
     }
@@ -186,13 +211,13 @@ export function installService(plan: ServicePlan): void {
   writeFileSync(plan.path, plan.contents, { encoding: 'utf8', mode: 0o600 });
   // Rewritten explicitly: an existing file keeps the mode it already had.
   chmodSync(plan.path, 0o600);
-  for (const command of plan.activate) run(command);
+  for (const command of plan.activate) runner(command);
 }
 
-export function uninstallService(plan: ServicePlan): void {
+export function uninstallService(plan: ServicePlan, runner: Runner = run): void {
   for (const command of plan.deactivate) {
     try {
-      run(command);
+      runner(command);
     } catch {
       // Removing something already absent is the outcome asked for, not a failure.
     }
