@@ -18,3 +18,8 @@ test-results/
 infrastructure/cdk.out/
 infrastructure/cdk.context.json
 infrastructure/deployment.json
+
+# Never. This repository is public, and an npm token in it is a token anyone can use to publish
+# a version of `sorema` that runs on other people's machines.
+.npmrc
+**/.npmrc

@@ -36,5 +36,8 @@
     "assistant",
     "agent",
     "automation"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
