@@ -11,12 +11,14 @@ Open the web app, sign in, and it will show you an eight-character code. Then, o
 want to reach:
 
 ```bash
-npx sorema pair A1B2C3D4
-npx sorema start
+npx sorema@latest A1B2C3D4
 ```
 
-Leave `start` running. While it runs, the machine is reachable; when it stops, the assistant says so
-rather than pretending.
+That is the whole thing: it pairs, installs itself so it survives a reboot, and connects. Run it
+again any time — it works out what is already done and does only the rest.
+
+`@latest` matters. The command installs itself and never checks for a newer version afterwards, so
+without it a machine keeps running whatever copy it already had.
 
 ## What it does to your machine
 
