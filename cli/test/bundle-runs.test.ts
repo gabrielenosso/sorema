@@ -55,6 +55,10 @@ function run(
       SOREMA_TUNNEL_URL: 'wss://example.invalid',
       LOCAL_AGENT_STATE_DIR: state,
       LOCAL_AGENT_DATABASE_URL: `file:${join(state, 'sorema.sqlite')}`,
+      // Its own port, because the developer running this very likely has the real agent installed
+      // and listening on the default one. Sharing it made the test fail with EADDRINUSE on exactly
+      // the machines where the product works — and pass on the ones where it does not.
+      LOCAL_AGENT_PORT: String(18_000 + (process.pid % 4_000)),
       ...extra,
     },
   });

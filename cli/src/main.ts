@@ -17,7 +17,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.7.4';
+const VERSION = '0.7.5';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -122,8 +122,14 @@ async function main(): Promise<number> {
   // decides. It is the only half that knows.
   const looksLikeCode = command !== undefined && /^[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}$/.test(command);
   if (!command || looksLikeCode) {
-    const { planService, installService, isServiceInstalled, findRottingPath, installGlobally } =
-      await import('./service.js');
+    const {
+      planService,
+      installService,
+      isServiceInstalled,
+      findRottingPath,
+      installGlobally,
+      restartService,
+    } = await import('./service.js');
     const { planSetup } = await import('./setup.js');
 
     let argv = [process.argv[1], 'start'].filter((value): value is string => Boolean(value));
@@ -179,6 +185,10 @@ async function main(): Promise<number> {
       if (step.action === 'install-service') {
         installService(plan);
         process.stdout.write(`Running under ${plan.describe}. Nothing else to start.\n`);
+      }
+      if (step.action === 'restart-service') {
+        restartService(plan);
+        process.stdout.write('Restarted it, so it answers as this machine and not the old one.\n');
       }
       if (step.action === 'already-running') {
         // Deliberately not "connected": nothing here has watched a socket open. Saying it and being

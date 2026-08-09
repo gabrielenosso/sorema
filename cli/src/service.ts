@@ -26,6 +26,14 @@ export type ServicePlan = {
   activate: readonly (readonly string[])[];
   /** Asks the service manager whether it knows about this, which a file on disk does not answer. */
   verify: readonly string[];
+  /**
+   * Stops and starts it again, for when the identity on disk has changed under a running daemon.
+   *
+   * Pairing writes a new key and a new device id to disk; a service started before that keeps
+   * signing as the machine it used to be, and its socket stays open so it never even retries. The
+   * account then shows the old machine connected and the new one as never having appeared.
+   */
+  restart: readonly (readonly string[])[];
   deactivate: readonly (readonly string[])[];
   describe: string;
 };
@@ -70,6 +78,7 @@ ${programArguments}
 </plist>
 `,
     verify: ['launchctl', 'print', `gui/${process.getuid?.() ?? 0}/${LABEL}`],
+    restart: [['launchctl', 'kickstart', '-k', `gui/${process.getuid?.() ?? 0}/${LABEL}`]],
     prepare: [['launchctl', 'bootout', `gui/${process.getuid?.() ?? 0}`, path]],
     activate: [['launchctl', 'bootstrap', `gui/${process.getuid?.() ?? 0}`, path]],
     deactivate: [['launchctl', 'bootout', `gui/${process.getuid?.() ?? 0}`, path]],
@@ -106,6 +115,7 @@ NoNewPrivileges=true
 WantedBy=default.target
 `,
     verify: ['systemctl', '--user', 'is-enabled', 'sorema.service'],
+    restart: [['systemctl', '--user', 'restart', 'sorema.service']],
     prepare: [],
     activate: [
       ['systemctl', '--user', 'daemon-reload'],
@@ -165,6 +175,10 @@ function planScheduledTask(executable: string, argv: readonly string[], home: st
 </Task>
 `,
     verify: ['schtasks', '/Query', '/TN', 'Sorema Agent'],
+    restart: [
+      ['schtasks', '/End', '/TN', 'Sorema Agent'],
+      ['schtasks', '/Run', '/TN', 'Sorema Agent'],
+    ],
     prepare: [],
     activate: [
       ['schtasks', '/Create', '/TN', 'Sorema Agent', '/XML', path, '/F'],
@@ -264,6 +278,22 @@ export function installGlobally(version: string, runner: Runner = run): string |
  * and a file on disk then reads as "installed" while nothing runs — which is how a machine came to
  * report itself connected with no agent on it at all. Only the manager can answer this.
  */
+/**
+ * Restarts the service so it reads the identity that is on disk now.
+ *
+ * The stop is allowed to fail: on Windows `schtasks /End` errors when the task is not running, and
+ * that is the ordinary case, not a problem.
+ */
+export function restartService(plan: ServicePlan, runner: Runner = run): void {
+  for (const command of plan.restart) {
+    try {
+      runner(command);
+    } catch {
+      // Stopping something that is not running is not a failure worth reporting.
+    }
+  }
+}
+
 export function isServiceInstalled(plan: ServicePlan, runner: Runner = run): boolean {
   try {
     runner(plan.verify);

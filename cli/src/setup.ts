@@ -18,6 +18,7 @@ export type SetupStep =
   | { action: 'pair'; code: string }
   | { action: 'install-globally' }
   | { action: 'install-service' }
+  | { action: 'restart-service' }
   | { action: 'run-in-foreground' }
   | { action: 'already-running' }
   | { action: 'explain'; message: string };
@@ -53,6 +54,12 @@ export function planSetup(state: MachineState): SetupStep[] {
   }
 
   if (!state.serviceInstalled) steps.push({ action: 'install-service' });
+  // A service that was already running when the pairing happened is still answering as the machine
+  // this one used to be: the new key is on disk, and the old socket is still open, so it has no
+  // reason to reconnect and read it. The account shows the deleted machine online and the new one
+  // as never having appeared. Nothing about that is visible from here, which is why it is done
+  // rather than mentioned.
+  else if (state.code) steps.push({ action: 'restart-service' });
   // Installing already started it, and a second copy in this terminal would fight the first for the
   // socket. Reporting that is more useful than appearing to hang.
   steps.push({ action: 'already-running' });
