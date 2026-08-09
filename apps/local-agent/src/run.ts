@@ -25,4 +25,11 @@ export async function runAgent(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   await agent.start();
+
+  // Never resolves. `agent.start()` returns as soon as everything is listening, and the caller then
+  // treats that as the work being done: the packaged command reached `process.exit(0)` about a
+  // millisecond later and killed the agent before its socket had finished connecting. Every machine
+  // paired this way reported itself never connected, while the log said "listening" on the way out,
+  // which read like success. Only a signal ends this, through the handlers above.
+  await new Promise<never>(() => {});
 }

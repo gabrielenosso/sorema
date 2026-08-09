@@ -91,11 +91,15 @@ describe.skipIf(!existsSync(BUNDLE))('the built command runs outside this test r
     expect(said).not.toMatch(/Dynamic require/);
     expect(said).not.toMatch(/unable to determine transport target/);
     expect(said).not.toMatch(/Cannot find (module|package)/);
-    // Positive evidence, not survival. A crashing logger can hold the exit open for ten seconds, so
-    // "it was still running" is satisfied by a corpse; only a line the agent prints after opening
-    // its own socket proves it got past every module it needs to reach.
+    // Both halves, because either one alone lies. Survival on its own is satisfied by a corpse: a
+    // crashing logger holds the exit open for ten seconds. And "listening" on its own was satisfied
+    // by an agent that printed it and then exited zero a millisecond later, because start returned
+    // and the command called process.exit on the way out — which is how every paired machine came
+    // to report itself never connected while its log read like success.
     expect(said).toMatch(/listening/);
-    expect(ranForMs).toBeGreaterThan(0);
+    expect(result.signal).toBe('SIGTERM');
+    expect(result.status).toBeNull();
+    expect(ranForMs).toBeGreaterThan(10_000);
   });
 
   it('starts for somebody whose shell exports NODE_ENV=development', () => {
