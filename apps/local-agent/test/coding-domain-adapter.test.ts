@@ -433,6 +433,34 @@ describe('choosing between agents is the user decision, not an array index', () 
     expect(result.providerId).toBe('codex');
   });
 
+  /**
+   * The machine is the last word on which agents exist, so its refusal has to be recoverable.
+   *
+   * A preference can arrive from a conversation that ended months ago, or from an account
+   * preference recorded on a different computer, and naming an agent this machine does not have is
+   * ordinary rather than exceptional. Refusing with nothing but the name that failed leaves the
+   * assistant guessing a second time; refusing with the list lets it offer the alternative out
+   * loud, which is the only acceptable way to change which account gets billed for the work.
+   */
+  it('refuses a preference this machine cannot honour, and says what it can', async () => {
+    const harness = createHarnessWithRealProvider(false, ['claude']);
+    await harness.adapter
+      .execute(
+        baseCommand('task.start', {
+          projectId: harness.projectId,
+          instruction: 'do it',
+          providerPreference: 'coding.claude',
+        }),
+      )
+      .then(
+        () => expect.unreachable('should have refused a capability id'),
+        (error: { structured: { code: string; details?: { availableProviders?: string[] } } }) => {
+          expect(error.structured.code).toBe('CODING_PROVIDER_NOT_INSTALLED');
+          expect(error.structured.details?.availableProviders).toEqual(['claude']);
+        },
+      );
+  });
+
   it('does not ask when only one agent is installed', async () => {
     const harness = createHarnessWithRealProvider(false, ['codex']);
     const result = (await harness.adapter.execute(

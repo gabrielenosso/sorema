@@ -1,3 +1,4 @@
+import { toStructuredError } from '@sorema/domain-model';
 import type { DeviceIdentityStore } from '../identity/device-identity-store.js';
 
 export type CloudCommand = { name: string; payload: Record<string, unknown> };
@@ -141,9 +142,14 @@ export class CloudTunnelClient {
     } catch (error) {
       // The cloud is waiting on this row; a command that throws must still answer, or the tool call
       // that asked for it sits there until it times out and tells the user nothing useful.
+      //
+      // The whole structured error travels, not `error.message`. A refusal the assistant is meant
+      // to recover from carries the recovery with it — `PROVIDER_CHOICE_REQUIRED` carries the
+      // sentence to say and the agents to offer in `details` — and flattening it to the technical
+      // message left the model told that a choice was required with nothing to choose between.
       this.send({
         type: 'command_result',
-        payload: { requestId, error: error instanceof Error ? error.message : String(error) },
+        payload: { requestId, error: toStructuredError(error) },
       });
     }
   }

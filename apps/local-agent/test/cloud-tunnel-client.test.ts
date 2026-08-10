@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SoremaError } from '@sorema/domain-model';
 import { CloudTunnelClient, type CloudSocket } from '../src/tunnel/cloud-tunnel-client.js';
 import type { DeviceIdentityStore } from '../src/identity/device-identity-store.js';
 
@@ -116,7 +117,47 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
     expect(context.sent[0]).toMatchObject({
       type: 'command_result',
-      payload: { requestId: 'req-8', error: 'the workspace is gone' },
+      payload: { requestId: 'req-8', error: { message: 'the workspace is gone' } },
+    });
+  });
+
+  /**
+   * A refusal the assistant is expected to act on cannot survive as a sentence.
+   *
+   * `PROVIDER_CHOICE_REQUIRED` carries the question to ask and the answers to offer, and both used
+   * to die here: the reply was `error.message`, so the cloud received "More than one agent can do
+   * this work and no preference has been recorded" and nothing to choose between. Every start_task
+   * on a machine with two agents installed failed that way, deterministically.
+   */
+  it('sends the whole structured error, not the sentence at the top of it', async () => {
+    context.client.start();
+    context.handleCommand.mockRejectedValue(
+      SoremaError.of('PROVIDER_CHOICE_REQUIRED', 'no preference has been recorded', {
+        details: { availableProviders: ['codex', 'claude'] },
+      }),
+    );
+
+    context.opened[0]?.socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'command_request',
+        payload: { requestId: 'req-9', command: { name: 'task.start', payload: {} } },
+      }),
+    });
+    await vi.waitFor(() => expect(context.sent).toHaveLength(1));
+
+    expect(context.sent[0]).toMatchObject({
+      type: 'command_result',
+      payload: {
+        requestId: 'req-9',
+        error: {
+          code: 'PROVIDER_CHOICE_REQUIRED',
+          message: 'no preference has been recorded',
+          retryable: false,
+          userMessage:
+            'More than one agent can do this. Ask the user which one to use, then try again.',
+          details: { availableProviders: ['codex', 'claude'] },
+        },
+      },
     });
   });
 

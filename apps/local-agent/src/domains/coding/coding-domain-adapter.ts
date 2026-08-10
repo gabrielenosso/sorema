@@ -151,20 +151,31 @@ export class CodingDomainAdapter implements DomainAdapter {
     const simulated = available.find((provider) => provider.providerId === FAKE_PROVIDER_ID);
     if (this.options.demoMode && simulated) return simulated;
 
+    const realProviders = available.filter((provider) => provider.providerId !== FAKE_PROVIDER_ID);
+
     if (preference) {
       const preferred = available.find((provider) => provider.providerId === preference);
       if (preferred) return preferred;
+      // The refusal carries the alternatives, because a preference that no longer fits is ordinary:
+      // it can come from an account preference recorded on another machine, or from a conversation
+      // months ago, or from a capability id guessed in place of a provider id. Naming only what
+      // failed leaves the assistant to guess again; naming what is here lets it offer the other
+      // agent out loud, which is the only acceptable way to move work onto a different account.
       throw SoremaError.of(
         'CODING_PROVIDER_NOT_INSTALLED',
         `The requested provider ${preference} is not usable on this device`,
-        { details: { requestedProvider: preference } },
+        {
+          details: {
+            requestedProvider: preference,
+            availableProviders: realProviders.map((provider) => provider.providerId),
+          },
+        },
       );
     }
 
     // With a genuine choice, picking one would be an accident of registration order, and it would
     // silently deny the user the choice the product promises them. Surfacing the options lets the
     // assistant ask once and remember the answer for this project.
-    const realProviders = available.filter((provider) => provider.providerId !== FAKE_PROVIDER_ID);
     if (realProviders.length > 1) {
       throw SoremaError.of(
         'PROVIDER_CHOICE_REQUIRED',
