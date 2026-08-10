@@ -25,10 +25,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Pinned past 22.13, where `node:sqlite` stopped needing a flag. The daemon refuses to
-          # start below it, so building on an older runner would ship a command that dies on the
-          # first database call.
-          node-version: '22.13'
+          # The latest 22.x, not a pinned patch. The floor that matters is the user's, and that is
+          # enforced by `engines` and by the runtime check in the daemon — the runner's own version
+          # only has to be new enough to run the tests and whatever npm the publish step needs.
+          # Pinning 22.13 here made `npm@latest` refuse to install, which wants 22.22 or newer.
+          node-version: '22'
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile
