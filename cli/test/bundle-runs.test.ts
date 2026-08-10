@@ -1,5 +1,13 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { isBuiltin } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -30,7 +38,10 @@ const BUNDLE = join(import.meta.dirname, '..', 'dist', 'sorema.mjs');
 function pretendPaired(state: string): void {
   const file = join(state, 'device-identity.json');
   const identity = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-  writeFileSync(file, JSON.stringify({ ...identity, deviceId: 'device-test', userId: 'user-test' }));
+  writeFileSync(
+    file,
+    JSON.stringify({ ...identity, deviceId: 'device-test', userId: 'user-test' }),
+  );
 }
 
 function run(
@@ -38,8 +49,9 @@ function run(
   timeoutMs = 20_000,
   extra: Record<string, string> = {},
   state = mkdtempSync(join(tmpdir(), 'sorema-bundle-')),
+  bundle = BUNDLE,
 ) {
-  return spawnSync(process.execPath, [BUNDLE, ...args], {
+  return spawnSync(process.execPath, [bundle, ...args], {
     encoding: 'utf8',
     timeout: timeoutMs,
     env: {
@@ -93,6 +105,12 @@ describe.skipIf(!existsSync(BUNDLE))('the built command runs outside this test r
     const ranForMs = Date.now() - startedAt;
     const said = `${result.stdout}${result.stderr}`;
 
+    // Node writes `ExperimentalWarning: SQLite is an experimental feature and might change at any
+    // time` to stderr the first time `node:sqlite` is loaded, on every version this command
+    // supports — it was unflagged at 22.13 but not de-experimented. Harmless, and asserted here
+    // rather than merely tolerated, because everything below reads the same stderr and the next
+    // person to add a "nothing was written to stderr" assertion needs to meet this first.
+    expect(result.stderr).toMatch(/ExperimentalWarning: SQLite is an experimental feature/);
     expect(said).not.toMatch(/Dynamic require/);
     expect(said).not.toMatch(/unable to determine transport target/);
     expect(said).not.toMatch(/Cannot find (module|package)/);
@@ -196,5 +214,85 @@ describe.skipIf(!existsSync(BUNDLE))('the built command runs outside this test r
     const saysPaired = both.stdout.includes('Paired as');
     const agentSaysUnpaired = `${started.stdout}${started.stderr}`.includes('not paired yet');
     expect(saysPaired && agentSaysUnpaired).toBe(false);
+  });
+});
+
+/**
+ * Every real module specifier the bundle loads.
+ *
+ * esbuild writes import declarations at column zero and nothing else in the file starts a line that
+ * way, which is what makes this precise where a search of the whole text is not: the bundle also
+ * contains `import('../fastify')` inside JSDoc and `require("ajv/dist/runtime/equal")` inside the
+ * strings ajv emits for standalone code generation. Both are indented, neither is ever loaded, and
+ * a naive scan reports them and teaches everybody to ignore this check.
+ */
+function staticModuleSpecifiers(bundle: string): string[] {
+  const specifiers = new Set<string>();
+  for (const line of bundle.split('\n')) {
+    if (!/^(import\b|export\b|\} from )/.test(line)) continue;
+    const match = /(?:^import\s*|\bfrom\s*)["']([^"']+)["']/.exec(line);
+    if (match?.[1]) specifiers.add(match[1]);
+  }
+  return [...specifiers].sort();
+}
+
+/**
+ * What "no runtime dependencies" means, read off the artefact rather than off the manifest.
+ *
+ * The manifest is the claim, not the evidence: `cli/package.json` said `better-sqlite3` and the
+ * bundle said `external: ['better-sqlite3']`, and the two agreeing is exactly how a package ends up
+ * needing a native binding compiled for every platform it is published to. What is asserted here is
+ * that the published file loads nothing but Node itself, and then that it really runs with no
+ * node_modules within reach.
+ */
+describe.skipIf(!existsSync(BUNDLE))('the published package stands alone', () => {
+  it('loads nothing but built-in modules', () => {
+    const specifiers = staticModuleSpecifiers(readFileSync(BUNDLE, 'utf8'));
+
+    expect(specifiers.length).toBeGreaterThan(0);
+    expect(specifiers.filter((specifier) => !isBuiltin(specifier))).toEqual([]);
+  });
+
+  it('declares no dependencies to install beside it', () => {
+    const manifest = JSON.parse(
+      readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8'),
+    ) as Record<string, unknown>;
+
+    for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      expect(manifest[field] ?? {}).toEqual({});
+    }
+  });
+
+  it('reaches node:sqlite without naming it in an import, or the version check is unreachable', () => {
+    const bundle = readFileSync(BUNDLE, 'utf8');
+
+    // A static import is linked before any statement runs, so on Node 22.12 the process would die
+    // with `No such built-in module: node:sqlite` and the sentence telling somebody to upgrade
+    // would never be printed. The guard only works while the module is fetched late.
+    expect(staticModuleSpecifiers(bundle)).not.toContain('node:sqlite');
+    expect(bundle).toContain('getBuiltinModule("node:sqlite")');
+  });
+
+  it('runs, and stays running, from a folder with no node_modules anywhere above it', () => {
+    // The whole file, copied out of the checkout to somewhere nothing can resolve for it. This is
+    // the difference between a package that happens to work on the machine that built it and one
+    // that works on a user's: `better-sqlite3` was installed here, so a bundle that still needed it
+    // looked fine from inside the repository.
+    const state = mkdtempSync(join(tmpdir(), 'sorema-alone-'));
+    const alone = join(state, 'sorema.mjs');
+    copyFileSync(BUNDLE, alone);
+    run(['status'], 20_000, {}, state, alone);
+    pretendPaired(state);
+
+    const result = run(['start'], 12_000, {}, state, alone);
+    const said = `${result.stdout}${result.stderr}`;
+
+    expect(said).not.toMatch(/Cannot find (module|package)|ERR_MODULE_NOT_FOUND|Dynamic require/);
+    // Both halves, for the reason the file has been saying since the sixth broken release: the
+    // evidence line on its own passed on an agent that printed it and exited, and survival on its
+    // own passed on a corpse whose logger held the exit open.
+    expect(said).toMatch(/listening/);
+    expect(result.signal).toBe('SIGTERM');
+    expect(result.status).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "sorema",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Run work on your own machine, by voice, from anywhere.",
   "license": "AGPL-3.0-only",
   "author": "Gabriele Nosso",
@@ -14,10 +14,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=22"
-  },
-  "dependencies": {
-    "better-sqlite3": "11.10.0"
+    "node": ">=22.13.0"
   },
   "devDependencies": {
     "esbuild": "^0.28.1"

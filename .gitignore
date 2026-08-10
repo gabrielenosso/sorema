@@ -9,6 +9,9 @@ coverage/
 .DS_Store
 data/
 *.sqlite
+# ...except the one database written by the build before node:sqlite, which is the only honest
+# proof that an upgrade keeps a user's job history: bytes the old dependency really produced.
+!apps/local-agent/test/fixtures/*.sqlite
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm

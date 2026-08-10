@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { looksLikePairingCode } from './commands.js';
 import {
+  describeUnsupportedNodeVersion,
+  nodeVersionHasBuiltInSqlite,
+} from '../../apps/local-agent/src/db/sqlite-runtime.js';
+import {
   describeWorkspaceRootProblem,
   expandWorkspaceRoot,
   readWorkspaceRoots,
@@ -25,7 +29,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.8.0';
+const VERSION = '0.9.0';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -165,6 +169,15 @@ async function chooseWorkspaceRoots(): Promise<void> {
 }
 
 async function main(): Promise<number> {
+  // Said here, before anything else, so somebody on an old Node learns it while pairing rather than
+  // days later when the service they installed turns out never to have started. The store refuses
+  // for itself as well, because that is the last thing between a frame and the file; this is the
+  // courtesy, and it is the one a person actually reads.
+  if (!nodeVersionHasBuiltInSqlite(process.versions.node)) {
+    process.stderr.write(`${describeUnsupportedNodeVersion(process.versions.node)}\n`);
+    return 1;
+  }
+
   applyDefaults();
   const [command, argument] = process.argv.slice(2);
 

@@ -1,66 +1,11 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
-
-export const localJobsTable = sqliteTable('jobs', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').notNull(),
-  deviceId: text('device_id').notNull(),
-  conversationId: text('conversation_id'),
-  domainSessionId: text('domain_session_id'),
-  domain: text('domain').notNull(),
-  type: text('type').notNull(),
-  status: text('status').notNull(),
-  progress: integer('progress'),
-  summary: text('summary'),
-  errorJson: text('error_json'),
-  instruction: text('instruction').notNull().default(''),
-  providerId: text('provider_id').notNull().default(''),
-  createdAt: text('created_at').notNull(),
-  startedAt: text('started_at'),
-  completedAt: text('completed_at'),
-  idempotencyKey: text('idempotency_key').notNull(),
-  correlationId: text('correlation_id').notNull(),
-});
-
-export const localDomainSessionsTable = sqliteTable('domain_sessions', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').notNull(),
-  deviceId: text('device_id').notNull(),
-  domain: text('domain').notNull(),
-  providerId: text('provider_id').notNull(),
-  providerSessionId: text('provider_session_id'),
-  projectPath: text('project_path'),
-  title: text('title').notNull(),
-  status: text('status').notNull(),
-  metadataJson: text('metadata_json').notNull().default('{}'),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-});
-
-export const outboxTable = sqliteTable('outbox', {
-  eventId: text('event_id').primaryKey(),
-  payloadJson: text('payload_json').notNull(),
-  attempts: integer('attempts').notNull().default(0),
-  nextAttemptAt: text('next_attempt_at').notNull(),
-  acknowledgedAt: text('acknowledged_at'),
-  createdAt: text('created_at').notNull(),
-});
-
-export const processedCommandsTable = sqliteTable('processed_commands', {
-  idempotencyKey: text('idempotency_key').primaryKey(),
-  commandName: text('command_name').notNull(),
-  resultJson: text('result_json').notNull(),
-  processedAt: text('processed_at').notNull(),
-});
-
-export const localAuditLogTable = sqliteTable('audit_log', {
-  id: text('id').primaryKey(),
-  action: text('action').notNull(),
-  outcome: text('outcome').notNull(),
-  correlationId: text('correlation_id'),
-  detailsJson: text('details_json').notNull().default('{}'),
-  createdAt: text('created_at').notNull(),
-});
-
+/**
+ * The whole of this machine's storage, as the statements that build it.
+ *
+ * There is no query builder behind these any more: `node:sqlite` is in the runtime, the store is a
+ * hundred lines of SQL, and a dependency that has to be compiled for every platform we publish to
+ * was buying nothing but the `eq` in a where clause. `IF NOT EXISTS` throughout, because the file
+ * an upgrade opens is the file the previous build wrote.
+ */
 export const LOCAL_AGENT_MIGRATION_STATEMENTS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
@@ -110,12 +55,18 @@ export const LOCAL_AGENT_MIGRATION_STATEMENTS: readonly string[] = [
     result_json TEXT NOT NULL,
     processed_at TEXT NOT NULL
   )`,
-  `CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    action TEXT NOT NULL,
-    outcome TEXT NOT NULL,
-    correlation_id TEXT,
-    details_json TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL
-  )`,
+  // `audit_log` is gone rather than capped, and this statement is here so it goes from the machines
+  // that already have it as well as from the ones that do not.
+  //
+  // Two call sites wrote it — creating a project and starting a coding task — and nothing in this
+  // repository, the cloud or the command ever read a row back. It had no eviction either, so on a
+  // machine somebody actually uses it grew for the life of the install. Giving it a reader was the
+  // alternative and it earns nothing: every field it held is already in a row that is kept and read
+  // aloud. The job carries its own instruction, provider, project, correlation id and timestamps,
+  // and a created project is a folder on disk that `projects.list` reports. An audit log that
+  // duplicates the records people actually consult is not a second opinion, it is a second copy.
+  //
+  // Dropping rather than merely abandoning it, because rows no code can reach are not a trail: they
+  // are disk, and leaving them punishes exactly the users who ran the old build longest.
+  'DROP TABLE IF EXISTS audit_log',
 ];

@@ -255,6 +255,18 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     loopbackServer,
     getCapabilities,
     start: async () => {
+      // The port is claimed before anything is written, which is what makes this daemon the single
+      // writer by construction rather than by everybody remembering. It used to be the other way
+      // round: marking interrupted jobs came first, so a manual `sorema start` beside the installed
+      // service marked the *service's* live jobs as interrupted, told the cloud they had failed, and
+      // only then discovered the address was taken and exited. The second instance did nothing but
+      // damage, and the machine that was working reported the work it was doing as dead.
+      await loopbackServer.listen({ host: config.loopbackHost, port: config.loopbackPort });
+      logger.info(
+        { host: config.loopbackHost, port: config.loopbackPort },
+        'local agent loopback api listening',
+      );
+
       const interrupted = codingAdapter.markInterruptedJobsAfterRestart();
       if (interrupted.length > 0) {
         logger.warn(
@@ -262,11 +274,6 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
           'marked jobs as interrupted after restart',
         );
       }
-      await loopbackServer.listen({ host: config.loopbackHost, port: config.loopbackPort });
-      logger.info(
-        { host: config.loopbackHost, port: config.loopbackPort },
-        'local agent loopback api listening',
-      );
       tunnelClient.start();
       cloudTunnel?.start();
     },
@@ -275,7 +282,7 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
       cloudTunnel?.stop();
       await tunnelClient.stop();
       await loopbackServer.close();
-      database.$client.close();
+      database.close();
     },
   };
 }

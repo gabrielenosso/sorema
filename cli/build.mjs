@@ -40,7 +40,11 @@ await build({
       'const __dirname = __pathDirname(__filename);',
     ].join('\n'),
   },
-  external: ['better-sqlite3'],
+  // Nothing is external. The last one was better-sqlite3, whose native binding could not be bundled
+  // and so had to be installed beside the command on every machine, for every platform, at the
+  // version its prebuilt binary happened to exist for. `node:sqlite` is in the runtime, so the
+  // published package is one file and no dependencies, and the bundle test reads that off the
+  // artefact rather than off this manifest.
   define,
 });
 

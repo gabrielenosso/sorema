@@ -130,11 +130,6 @@ export class CodingDomainAdapter implements DomainAdapter {
     const before = this.options.projectRegistry.listProjects().length;
     const project = this.options.projectRegistry.createProject(name);
     const alreadyExisted = this.options.projectRegistry.listProjects().length === before;
-    this.options.store.appendAuditEntry({
-      action: 'projects.create',
-      outcome: alreadyExisted ? 'already_existed' : 'created',
-      details: { projectId: project.id, path: project.path },
-    });
     return { project, alreadyExisted };
   }
 
@@ -339,18 +334,6 @@ export class CodingDomainAdapter implements DomainAdapter {
           error: toStructured(error),
         });
       });
-
-    this.options.store.appendAuditEntry({
-      action: 'coding.task.start',
-      outcome: 'accepted',
-      correlationId: input.command.correlationId,
-      details: {
-        jobId,
-        providerId: input.provider.providerId,
-        projectPath: input.session.projectPath,
-        resumed: input.resumed,
-      },
-    });
 
     return {
       accepted: true as const,

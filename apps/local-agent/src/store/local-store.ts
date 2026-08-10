@@ -1,6 +1,5 @@
-import { and, asc, eq, inArray, isNull, lte } from 'drizzle-orm';
+import type { SQLOutputValue } from 'node:sqlite';
 import {
-  createIdentifier,
   nowIsoTimestamp,
   TERMINAL_JOB_STATUSES,
   type SoremaEvent,
@@ -8,13 +7,6 @@ import {
   type Job,
 } from '@sorema/domain-model';
 import type { LocalAgentDatabase } from '../db/client.js';
-import {
-  localAuditLogTable,
-  localDomainSessionsTable,
-  localJobsTable,
-  outboxTable,
-  processedCommandsTable,
-} from '../db/schema.js';
 
 export type LocalJob = Job & { instruction: string; providerId: string };
 
@@ -25,7 +17,45 @@ export type OutboxEntry = {
   nextAttemptAt: string;
 };
 
-function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+type Row = Record<string, SQLOutputValue>;
+
+const ACTIVE_JOB_STATUSES: readonly string[] = ['queued', 'running', 'waiting_for_approval'];
+
+// Built from the list rather than written beside it, so adding a status cannot leave the query
+// binding fewer values than it was given.
+const ACTIVE_JOB_PLACEHOLDERS = ACTIVE_JOB_STATUSES.map(() => '?').join(', ');
+
+/**
+ * A whole row every time, which is why `INSERT OR REPLACE` is the same thing the query builder's
+ * upsert used to do here: every column is supplied, the conflict can only be the primary key, and
+ * there are no foreign keys or triggers for the delete half of a replace to reach.
+ */
+const SAVE_JOB = `INSERT OR REPLACE INTO jobs (
+    id, user_id, device_id, conversation_id, domain_session_id, domain, type, status, progress,
+    summary, error_json, instruction, provider_id, created_at, started_at, completed_at,
+    idempotency_key, correlation_id
+  ) VALUES (
+    :id, :userId, :deviceId, :conversationId, :domainSessionId, :domain, :type, :status, :progress,
+    :summary, :errorJson, :instruction, :providerId, :createdAt, :startedAt, :completedAt,
+    :idempotencyKey, :correlationId
+  )`;
+
+const SAVE_DOMAIN_SESSION = `INSERT OR REPLACE INTO domain_sessions (
+    id, user_id, device_id, domain, provider_id, provider_session_id, project_path, title, status,
+    metadata_json, created_at, updated_at
+  ) VALUES (
+    :id, :userId, :deviceId, :domain, :providerId, :providerSessionId, :projectPath, :title,
+    :status, :metadataJson, :createdAt, :updatedAt
+  )`;
+
+/**
+ * Delay before the *next* attempt, indexed by how many attempts have already been made. The first
+ * send happens immediately when the event is queued, so index 0 is a retry delay and must be
+ * greater than zero: a zero here makes an unacknowledged event resend on every flush tick.
+ */
+const BACKOFF_SCHEDULE_MS = [1_000, 5_000, 15_000, 60_000, 300_000];
+
+function parseJson<T>(raw: string | undefined, fallback: T): T {
   if (!raw) return fallback;
   try {
     return JSON.parse(raw) as T;
@@ -34,56 +64,70 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-function optional(value: string | null | undefined): string | undefined {
-  return value ?? undefined;
+function readText(row: Row, column: string): string {
+  const value = row[column];
+  // Every column read through here is NOT NULL in the schema, so anything else is a row this build
+  // did not write and cannot honestly interpret.
+  if (typeof value !== 'string') throw new Error(`Column ${column} does not hold text`);
+  return value;
 }
 
-function toLocalJob(row: typeof localJobsTable.$inferSelect): LocalJob {
+function readOptionalText(row: Row, column: string): string | undefined {
+  const value = row[column];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readInteger(row: Row, column: string): number {
+  const value = row[column];
+  if (typeof value !== 'number') throw new Error(`Column ${column} does not hold a number`);
+  return value;
+}
+
+function readOptionalInteger(row: Row, column: string): number | undefined {
+  const value = row[column];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function toLocalJob(row: Row): LocalJob {
+  const progress = readOptionalInteger(row, 'progress');
   return {
-    id: row.id,
-    userId: row.userId,
-    deviceId: row.deviceId,
-    conversationId: optional(row.conversationId),
-    domainSessionId: optional(row.domainSessionId),
-    domain: row.domain,
-    type: row.type,
-    status: row.status as Job['status'],
-    progress: row.progress === null ? undefined : row.progress / 100,
-    summary: optional(row.summary),
-    error: row.errorJson ? parseJson<Job['error']>(row.errorJson, undefined) : undefined,
-    createdAt: row.createdAt,
-    startedAt: optional(row.startedAt),
-    completedAt: optional(row.completedAt),
-    idempotencyKey: row.idempotencyKey,
-    correlationId: row.correlationId,
-    instruction: row.instruction,
-    providerId: row.providerId,
+    id: readText(row, 'id'),
+    userId: readText(row, 'user_id'),
+    deviceId: readText(row, 'device_id'),
+    conversationId: readOptionalText(row, 'conversation_id'),
+    domainSessionId: readOptionalText(row, 'domain_session_id'),
+    domain: readText(row, 'domain'),
+    type: readText(row, 'type'),
+    status: readText(row, 'status') as Job['status'],
+    progress: progress === undefined ? undefined : progress / 100,
+    summary: readOptionalText(row, 'summary'),
+    error: parseJson<Job['error']>(readOptionalText(row, 'error_json'), undefined),
+    createdAt: readText(row, 'created_at'),
+    startedAt: readOptionalText(row, 'started_at'),
+    completedAt: readOptionalText(row, 'completed_at'),
+    idempotencyKey: readText(row, 'idempotency_key'),
+    correlationId: readText(row, 'correlation_id'),
+    instruction: readText(row, 'instruction'),
+    providerId: readText(row, 'provider_id'),
   };
 }
 
-function toDomainSession(row: typeof localDomainSessionsTable.$inferSelect): DomainSession {
+function toDomainSession(row: Row): DomainSession {
   return {
-    id: row.id,
-    userId: row.userId,
-    deviceId: row.deviceId,
-    domain: row.domain as DomainSession['domain'],
-    providerId: row.providerId,
-    providerSessionId: optional(row.providerSessionId),
-    projectPath: optional(row.projectPath),
-    title: row.title,
-    status: row.status as DomainSession['status'],
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    metadata: parseJson<Record<string, unknown>>(row.metadataJson, {}),
+    id: readText(row, 'id'),
+    userId: readText(row, 'user_id'),
+    deviceId: readText(row, 'device_id'),
+    domain: readText(row, 'domain') as DomainSession['domain'],
+    providerId: readText(row, 'provider_id'),
+    providerSessionId: readOptionalText(row, 'provider_session_id'),
+    projectPath: readOptionalText(row, 'project_path'),
+    title: readText(row, 'title'),
+    status: readText(row, 'status') as DomainSession['status'],
+    createdAt: readText(row, 'created_at'),
+    updatedAt: readText(row, 'updated_at'),
+    metadata: parseJson<Record<string, unknown>>(readOptionalText(row, 'metadata_json'), {}),
   };
 }
-
-/**
- * Delay before the *next* attempt, indexed by how many attempts have already been made. The first
- * send happens immediately when the event is queued, so index 0 is a retry delay and must be
- * greater than zero: a zero here makes an unacknowledged event resend on every flush tick.
- */
-const BACKOFF_SCHEDULE_MS = [1_000, 5_000, 15_000, 60_000, 300_000];
 
 export class LocalStore {
   private readonly database: LocalAgentDatabase;
@@ -93,7 +137,7 @@ export class LocalStore {
   }
 
   saveJob(job: LocalJob): void {
-    const values = {
+    this.database.prepare(SAVE_JOB).run({
       id: job.id,
       userId: job.userId,
       deviceId: job.deviceId,
@@ -112,31 +156,20 @@ export class LocalStore {
       completedAt: job.completedAt ?? null,
       idempotencyKey: job.idempotencyKey,
       correlationId: job.correlationId,
-    };
-    this.database
-      .insert(localJobsTable)
-      .values(values)
-      .onConflictDoUpdate({ target: localJobsTable.id, set: values })
-      .run();
+    });
   }
 
   findJob(jobId: string): LocalJob | null {
-    const row = this.database
-      .select()
-      .from(localJobsTable)
-      .where(eq(localJobsTable.id, jobId))
-      .get();
+    const row = this.database.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
     return row ? toLocalJob(row) : null;
   }
 
   listJobs(options: { activeOnly?: boolean } = {}): LocalJob[] {
     const rows = options.activeOnly
       ? this.database
-          .select()
-          .from(localJobsTable)
-          .where(inArray(localJobsTable.status, ['queued', 'running', 'waiting_for_approval']))
-          .all()
-      : this.database.select().from(localJobsTable).all();
+          .prepare(`SELECT * FROM jobs WHERE status IN (${ACTIVE_JOB_PLACEHOLDERS})`)
+          .all(...ACTIVE_JOB_STATUSES)
+      : this.database.prepare('SELECT * FROM jobs').all();
     return rows.map(toLocalJob);
   }
 
@@ -147,7 +180,7 @@ export class LocalStore {
   }
 
   saveDomainSession(session: DomainSession): void {
-    const values = {
+    this.database.prepare(SAVE_DOMAIN_SESSION).run({
       id: session.id,
       userId: session.userId,
       deviceId: session.deviceId,
@@ -160,27 +193,17 @@ export class LocalStore {
       metadataJson: JSON.stringify(session.metadata),
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
-    };
-    this.database
-      .insert(localDomainSessionsTable)
-      .values(values)
-      .onConflictDoUpdate({ target: localDomainSessionsTable.id, set: values })
-      .run();
+    });
   }
 
   findDomainSession(sessionId: string): DomainSession | null {
-    const row = this.database
-      .select()
-      .from(localDomainSessionsTable)
-      .where(eq(localDomainSessionsTable.id, sessionId))
-      .get();
+    const row = this.database.prepare('SELECT * FROM domain_sessions WHERE id = ?').get(sessionId);
     return row ? toDomainSession(row) : null;
   }
 
   listDomainSessions(filter: { domain?: string; projectPath?: string } = {}): DomainSession[] {
     return this.database
-      .select()
-      .from(localDomainSessionsTable)
+      .prepare('SELECT * FROM domain_sessions')
       .all()
       .map(toDomainSession)
       .filter((session) => !filter.domain || session.domain === filter.domain)
@@ -200,49 +223,48 @@ export class LocalStore {
 
   enqueueOutboxEvent(event: SoremaEvent): void {
     const timestamp = nowIsoTimestamp();
+    // `OR IGNORE`, so re-queueing an event keeps the schedule the first attempt is already on rather
+    // than resetting its backoff.
     this.database
-      .insert(outboxTable)
-      .values({
-        eventId: event.eventId,
-        payloadJson: JSON.stringify(event),
-        attempts: 0,
-        nextAttemptAt: timestamp,
-        createdAt: timestamp,
-      })
-      .onConflictDoNothing()
-      .run();
+      .prepare(
+        `INSERT OR IGNORE INTO outbox (event_id, payload_json, attempts, next_attempt_at, created_at)
+         VALUES (?, ?, 0, ?, ?)`,
+      )
+      .run(event.eventId, JSON.stringify(event), timestamp, timestamp);
   }
 
   listDueOutboxEntries(limit = 25, now: Date = new Date()): OutboxEntry[] {
     return this.database
-      .select()
-      .from(outboxTable)
-      .where(
-        and(isNull(outboxTable.acknowledgedAt), lte(outboxTable.nextAttemptAt, now.toISOString())),
+      .prepare(
+        `SELECT * FROM outbox
+         WHERE acknowledged_at IS NULL AND next_attempt_at <= ?
+         ORDER BY created_at ASC
+         LIMIT ?`,
       )
-      .orderBy(asc(outboxTable.createdAt))
-      .limit(limit)
-      .all()
+      .all(now.toISOString(), limit)
       .map((row) => ({
-        eventId: row.eventId,
-        event: parseJson<SoremaEvent>(row.payloadJson, null as unknown as SoremaEvent),
-        attempts: row.attempts,
-        nextAttemptAt: row.nextAttemptAt,
+        eventId: readText(row, 'event_id'),
+        event: parseJson<SoremaEvent>(
+          readOptionalText(row, 'payload_json'),
+          null as unknown as SoremaEvent,
+        ),
+        attempts: readInteger(row, 'attempts'),
+        nextAttemptAt: readText(row, 'next_attempt_at'),
       }))
       .filter((entry) => entry.event !== null);
   }
 
   countPendingOutboxEntries(): number {
-    return this.database.select().from(outboxTable).where(isNull(outboxTable.acknowledgedAt)).all()
-      .length;
+    const row = this.database
+      .prepare('SELECT COUNT(*) AS pending FROM outbox WHERE acknowledged_at IS NULL')
+      .get();
+    return row ? readInteger(row, 'pending') : 0;
   }
 
   acknowledgeOutboxEvent(eventId: string): void {
     this.database
-      .update(outboxTable)
-      .set({ acknowledgedAt: nowIsoTimestamp() })
-      .where(eq(outboxTable.eventId, eventId))
-      .run();
+      .prepare('UPDATE outbox SET acknowledged_at = ? WHERE event_id = ?')
+      .run(nowIsoTimestamp(), eventId);
   }
 
   recordOutboxDeliveryAttempt(eventId: string, attempts: number): void {
@@ -251,53 +273,26 @@ export class LocalStore {
       BACKOFF_SCHEDULE_MS.at(-1) ??
       60_000;
     this.database
-      .update(outboxTable)
-      .set({
-        attempts: attempts + 1,
-        nextAttemptAt: new Date(Date.now() + delayMs).toISOString(),
-      })
-      .where(eq(outboxTable.eventId, eventId))
-      .run();
+      .prepare('UPDATE outbox SET attempts = ?, next_attempt_at = ? WHERE event_id = ?')
+      .run(attempts + 1, new Date(Date.now() + delayMs).toISOString(), eventId);
   }
 
   findProcessedCommand(idempotencyKey: string): unknown | null {
     const row = this.database
-      .select()
-      .from(processedCommandsTable)
-      .where(eq(processedCommandsTable.idempotencyKey, idempotencyKey))
-      .get();
-    return row ? parseJson<unknown>(row.resultJson, null) : null;
+      .prepare('SELECT result_json FROM processed_commands WHERE idempotency_key = ?')
+      .get(idempotencyKey);
+    return row ? parseJson<unknown>(readOptionalText(row, 'result_json'), null) : null;
   }
 
   recordProcessedCommand(idempotencyKey: string, commandName: string, result: unknown): void {
+    // `OR IGNORE`, because the first answer a command gave is the one already spoken to the user;
+    // replacing it would let a retry rewrite history.
     this.database
-      .insert(processedCommandsTable)
-      .values({
-        idempotencyKey,
-        commandName,
-        resultJson: JSON.stringify(result),
-        processedAt: nowIsoTimestamp(),
-      })
-      .onConflictDoNothing()
-      .run();
-  }
-
-  appendAuditEntry(entry: {
-    action: string;
-    outcome: string;
-    correlationId?: string;
-    details?: Record<string, unknown>;
-  }): void {
-    this.database
-      .insert(localAuditLogTable)
-      .values({
-        id: createIdentifier('audit'),
-        action: entry.action,
-        outcome: entry.outcome,
-        correlationId: entry.correlationId ?? null,
-        detailsJson: JSON.stringify(entry.details ?? {}),
-        createdAt: nowIsoTimestamp(),
-      })
-      .run();
+      .prepare(
+        `INSERT OR IGNORE INTO processed_commands
+           (idempotency_key, command_name, result_json, processed_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(idempotencyKey, commandName, JSON.stringify(result), nowIsoTimestamp());
   }
 }
