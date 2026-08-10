@@ -1,6 +1,14 @@
 import { hostname, homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { looksLikePairingCode } from './commands.js';
+import {
+  describeWorkspaceRootProblem,
+  expandWorkspaceRoot,
+  readWorkspaceRoots,
+  suggestWorkspaceRoot,
+  writeWorkspaceRoots,
+} from './workspace-roots.js';
 
 declare const __SOREMA_API_URL__: string;
 declare const __SOREMA_TUNNEL_URL__: string;
@@ -17,13 +25,15 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.7.5';
+const VERSION = '0.8.0';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
   sorema <CODE>              Do everything: pair, install, connect. Run it again any time.
   sorema pair <CODE>         Claim the code shown in the web app. Once per machine.
   sorema start               Stay connected. Leave it running.
+  sorema projects            Say which folder your projects come from.
+  sorema projects <FOLDER>   Change it, for when your code moves.
   sorema service install     Start on its own whenever you log in.
   sorema service uninstall   Stop doing that.
   sorema status              Say whether this machine is paired, and as whom.
@@ -55,6 +65,11 @@ function applyDefaults(): void {
   process.env.LOCAL_AGENT_STATE_DIR ??= stateDirectory();
   process.env.LOCAL_AGENT_DATABASE_URL ??= `file:${join(stateDirectory(), 'sorema.sqlite')}`;
   process.env.LOCAL_AGENT_DEVICE_NAME ??= `${hostname()} (${platform()})`;
+  // Read from disk rather than asked for here: `start` runs under a service with no terminal, so
+  // the answer given once at pairing has to reach it some other way. Left empty when nothing has
+  // been chosen, because the agent then reports itself misconfigured — which is true, and visible —
+  // rather than quietly offering up a folder nobody named.
+  process.env.LOCAL_AGENT_WORKSPACE_ROOTS ??= readWorkspaceRoots(stateDirectory()).join(',');
   // Off by default: somebody who installed this wants it to do the work, not to mime it.
   process.env.SOREMA_DEMO_MODE ??= 'false';
   // Forced, not defaulted. The logger picks a pretty-printing transport whenever this is not
@@ -91,6 +106,64 @@ async function confirmRepairing(deviceId: string): Promise<boolean> {
   }
 }
 
+function applyWorkspaceRoots(roots: readonly string[]): void {
+  writeWorkspaceRoots(stateDirectory(), roots);
+  // This process may go on to run the agent in the foreground, and applyDefaults read the file as it
+  // was before the question was asked.
+  process.env.LOCAL_AGENT_WORKSPACE_ROOTS = roots.join(',');
+}
+
+/**
+ * Asks where the user keeps their code, and writes the answer down.
+ *
+ * This is the question nobody was ever asked. The agent lists the folders under these roots as the
+ * projects it can work on, and refuses every path outside them, so with none set it offers nothing
+ * and the assistant reports — correctly, from where it sits — that this machine has no projects.
+ *
+ * A wrong root is worse than no root, because it is the boundary the coding agents are held to. So
+ * without a terminal this refuses to guess, and the suggestion is only ever a folder that already
+ * exists and is conventionally full of code.
+ */
+async function chooseWorkspaceRoots(): Promise<void> {
+  const suggestion = suggestWorkspaceRoot();
+  process.stdout.write(
+    '\nWhere do you keep your code?\n' +
+      'The folders inside it become your projects, and it is the only place anything running here\n' +
+      'is allowed to read or change.\n',
+  );
+
+  if (!process.stdin.isTTY) {
+    // A service has no terminal, and neither does a script. Guessing here would decide what the
+    // coding agents may touch on somebody's behalf, without them ever seeing the question.
+    process.stdout.write(
+      `Nothing to ask with here, so nothing was assumed.\n` +
+        `Run: sorema projects ${suggestion ?? '<FOLDER>'}\n`,
+    );
+    return;
+  }
+
+  const { createInterface } = await import('node:readline/promises');
+  const question = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const answer = await question.question(suggestion ? `Folder [${suggestion}]: ` : 'Folder: ');
+      const chosen = answer.trim().length > 0 ? expandWorkspaceRoot(answer) : suggestion;
+      if (!chosen) continue;
+      const problem = describeWorkspaceRootProblem(chosen);
+      if (problem) {
+        process.stdout.write(`${problem}.\n`);
+        continue;
+      }
+      applyWorkspaceRoots([chosen]);
+      process.stdout.write(`Your projects are the folders in ${chosen}.\n`);
+      return;
+    }
+    process.stdout.write('Left unset. Run: sorema projects <FOLDER> when you know.\n');
+  } finally {
+    question.close();
+  }
+}
+
 async function main(): Promise<number> {
   applyDefaults();
   const [command, argument] = process.argv.slice(2);
@@ -114,13 +187,7 @@ async function main(): Promise<number> {
 
   // Everything, in one command: `sorema` on its own, or `sorema <CODE>` the first time. It works
   // out what is missing and does only that, so running it twice costs nothing.
-  //
-  // Deliberately wider than the format the service issues today. Two pairing-code alphabets exist
-  // in this codebase and only one is live, so a validator matching exactly the live one would
-  // silently reject every code the day the other became live, and the symptom would be the command
-  // claiming there is no such command. Anything that could be a code is sent, and the service
-  // decides. It is the only half that knows.
-  const looksLikeCode = command !== undefined && /^[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}$/.test(command);
+  const looksLikeCode = looksLikePairingCode(command);
   if (!command || looksLikeCode) {
     const {
       planService,
@@ -139,6 +206,7 @@ async function main(): Promise<number> {
       code: looksLikeCode ? command.replace('-', '').toUpperCase() : null,
       rottingPath: findRottingPath(process.execPath, argv),
       serviceInstalled: isServiceInstalled(plan),
+      workspaceRootsConfigured: readWorkspaceRoots(stateDirectory()).length > 0,
     });
 
     for (const step of steps) {
@@ -168,6 +236,7 @@ async function main(): Promise<number> {
           throw error;
         }
       }
+      if (step.action === 'choose-projects') await chooseWorkspaceRoots();
       if (step.action === 'install-globally') {
         const durable = installGlobally(VERSION);
         if (!durable) {
@@ -211,6 +280,65 @@ async function main(): Promise<number> {
         ? `Paired as ${identity.deviceId}.\n`
         : 'Not paired. Run: sorema pair <CODE>\n',
     );
+    // Said here because a paired machine offering no projects looks, from the web app, exactly like
+    // a broken one, and nothing on either side used to mention which folder it was reading.
+    const roots = readWorkspaceRoots(stateDirectory());
+    process.stdout.write(
+      roots.length === 0
+        ? 'No projects folder set, so this machine offers none. Run: sorema projects <FOLDER>\n'
+        : `Projects come from ${roots.join(', ')}.\n`,
+    );
+    return 0;
+  }
+
+  if (command === 'projects') {
+    // Read off argv rather than the single `argument` above: more than one folder is a reasonable
+    // thing to have, and taking only the first would silently drop the rest.
+    const requested = process.argv.slice(3);
+    if (requested.length === 0) {
+      const roots = readWorkspaceRoots(stateDirectory());
+      if (roots.length === 0) {
+        process.stdout.write(
+          'No folder is set, so this machine offers no projects.\nRun: sorema projects <FOLDER>\n',
+        );
+        return 1;
+      }
+      for (const root of roots) {
+        // A root that has since been moved or deleted is named as such. Somebody whose projects
+        // moved sees why the machine went empty instead of assuming pairing broke.
+        const problem = describeWorkspaceRootProblem(root);
+        process.stdout.write(`${root}${problem ? ` — ${problem}` : ''}\n`);
+      }
+      return 0;
+    }
+
+    // Every folder is checked before any of them is stored: half-applying this would leave the
+    // machine pointed at a list nobody asked for.
+    const chosen: string[] = [];
+    for (const value of requested) {
+      const expanded = expandWorkspaceRoot(value);
+      const problem = describeWorkspaceRootProblem(expanded);
+      if (problem) {
+        process.stderr.write(`Not changing anything: ${problem}.\n`);
+        return 1;
+      }
+      chosen.push(expanded);
+    }
+    applyWorkspaceRoots(chosen);
+    process.stdout.write(`Your projects are the folders in ${chosen.join(', ')}.\n`);
+
+    const { planService, isServiceInstalled, restartService } = await import('./service.js');
+    const plan = planService(
+      process.execPath,
+      [process.argv[1], 'start'].filter((value): value is string => Boolean(value)),
+    );
+    // Without this the answer takes effect at the next logon. The service read the roots when it
+    // started and has no reason to read them again, so the folder changes and nothing happens —
+    // which is indistinguishable from the command having ignored it.
+    if (isServiceInstalled(plan)) {
+      restartService(plan);
+      process.stdout.write('Restarted it, so it looks there now.\n');
+    }
     return 0;
   }
 
@@ -233,7 +361,11 @@ async function main(): Promise<number> {
       identity,
       String(process.env.LOCAL_AGENT_DEVICE_NAME),
     );
-    process.stdout.write(`Paired as ${paired.deviceId}.\nNow run: sorema start\n`);
+    process.stdout.write(`Paired as ${paired.deviceId}.\n`);
+    // The one moment somebody is certainly sitting at the terminal. Skipped when it has already been
+    // answered, so re-running this never quietly reopens a decision that was made.
+    if (readWorkspaceRoots(stateDirectory()).length === 0) await chooseWorkspaceRoots();
+    process.stdout.write('Now run: sorema start\n');
     return 0;
   }
 

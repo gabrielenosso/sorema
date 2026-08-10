@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { planSetup } from '../src/setup.js';
 
-const DURABLE = { rottingPath: null };
+/** Durable paths, and somebody has already said where their code lives. */
+const DURABLE = { rottingPath: null, workspaceRootsConfigured: true };
 
 describe('working out what a machine still needs', () => {
   it('asks for a code when there is nothing to go on', () => {
@@ -51,6 +52,7 @@ describe('working out what a machine still needs', () => {
       code: null,
       serviceInstalled: false,
       rottingPath: 'the npx cache',
+      workspaceRootsConfigured: true,
     });
 
     // It installs itself somewhere durable rather than sending the reader off to do it.
@@ -68,10 +70,83 @@ describe('working out what a machine still needs', () => {
       code: 'A1B2C3D4',
       serviceInstalled: false,
       rottingPath: 'the npx cache',
+      workspaceRootsConfigured: true,
     });
 
     expect(steps[0]?.action).toBe('pair');
     expect(steps.map((step) => step.action)).toContain('install-globally');
+  });
+});
+
+/**
+ * Nobody was ever asked where the code lives.
+ *
+ * `LOCAL_AGENT_WORKSPACE_ROOTS` is the only thing that decides which folders the agent offers, and
+ * no part of this system set it: not the command, not the web app, not pairing. Every machine that
+ * had been through the whole of this therefore listed no projects at all, and the assistant said so.
+ */
+describe('asking where the projects are', () => {
+  it('asks while pairing, before anything is started', () => {
+    const steps = planSetup({
+      paired: false,
+      code: 'A1B2C3D4',
+      rottingPath: null,
+      serviceInstalled: false,
+      workspaceRootsConfigured: false,
+    });
+
+    // Before install-service: the service is what needs the answer, and it has no terminal to ask
+    // the question from once it is running.
+    expect(steps.map((step) => step.action)).toEqual([
+      'pair',
+      'choose-projects',
+      'install-service',
+      'already-running',
+    ]);
+  });
+
+  it('asks a machine paired by a version that never asked', () => {
+    const steps = planSetup({
+      paired: true,
+      code: null,
+      rottingPath: null,
+      serviceInstalled: true,
+      workspaceRootsConfigured: false,
+    });
+
+    // And restarts, because the running service read an empty list when it started and would go on
+    // answering with it however good the answer just given was.
+    expect(steps.map((step) => step.action)).toEqual([
+      'choose-projects',
+      'restart-service',
+      'already-running',
+    ]);
+  });
+
+  it('does not ask again once it has been answered', () => {
+    const steps = planSetup({
+      paired: true,
+      code: null,
+      rottingPath: null,
+      serviceInstalled: true,
+      workspaceRootsConfigured: true,
+    });
+
+    expect(steps.map((step) => step.action)).not.toContain('choose-projects');
+  });
+
+  it('installs somewhere durable before asking, so the answer is not thrown away with the install', () => {
+    const steps = planSetup({
+      paired: true,
+      code: null,
+      rottingPath: 'the npx cache',
+      serviceInstalled: false,
+      workspaceRootsConfigured: false,
+    });
+
+    const actions = steps.map((step) => step.action);
+    expect(actions.indexOf('install-globally')).toBeLessThan(actions.indexOf('choose-projects'));
+    expect(actions.indexOf('choose-projects')).toBeLessThan(actions.indexOf('install-service'));
   });
 });
 
@@ -90,6 +165,7 @@ describe('pairing a machine that is already running', () => {
       code: 'ABCD1234',
       rottingPath: null,
       serviceInstalled: true,
+      workspaceRootsConfigured: true,
     });
 
     expect(steps.map((step) => step.action)).toEqual(['pair', 'restart-service', 'already-running']);
@@ -101,6 +177,7 @@ describe('pairing a machine that is already running', () => {
       code: null,
       rottingPath: null,
       serviceInstalled: true,
+      workspaceRootsConfigured: true,
     });
 
     expect(steps.map((step) => step.action)).not.toContain('restart-service');
@@ -112,6 +189,7 @@ describe('pairing a machine that is already running', () => {
       code: 'ABCD1234',
       rottingPath: null,
       serviceInstalled: false,
+      workspaceRootsConfigured: true,
     });
 
     expect(steps.map((step) => step.action)).toContain('install-service');

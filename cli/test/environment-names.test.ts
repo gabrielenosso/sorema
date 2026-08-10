@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { generatePairingCode } from '../../packages/security/src/pairing.js';
+import { COMMAND_WORDS, looksLikePairingCode } from '../src/commands.js';
 
 const here = import.meta.dirname;
 const cliSource = readFileSync(join(here, '..', 'src', 'main.ts'), 'utf8');
@@ -59,35 +60,47 @@ describe('the command and the agent name the same settings', () => {
 /**
  * Ties the two halves of pairing together.
  *
- * The pattern is lifted out of the command's own source rather than copied here, because a test
- * carrying its own copy of the rule agrees with itself no matter what the command does — which is
- * how the two halves of every other boundary in this project managed to disagree for weeks.
+ * The rule is the command's own function rather than a copy of it, because a test carrying its own
+ * copy agrees with itself no matter what the command does — which is how the two halves of every
+ * other boundary in this project managed to disagree for weeks.
  *
  * Two pairing-code alphabets exist here and only one is live. Both must get through, and the one
  * that would not was the dashed form: the command answered "No command called KQZM-W7PT", which
  * reads like a typo rather than a validator turning away a code the system issued itself.
  */
 describe('the command accepts the codes this system can issue', () => {
-  const source = /looksLikeCode = command !== undefined && (\/.+\/)\.test/.exec(cliSource);
-  const looksLikeCode = new RegExp(String(source?.[1]).slice(1, -1));
-
-  it('reads its rule out of the command', () => {
-    expect(source).not.toBeNull();
-  });
-
   it.each(['6D246143', 'BD37A99A', 'KQZM-W7PT', 'KQZMW7PT'])('takes %s as a code', (code) => {
-    expect(looksLikeCode.test(code)).toBe(true);
+    expect(looksLikePairingCode(code)).toBe(true);
   });
 
   it('accepts every code the generator in this repository produces', () => {
     for (let attempt = 0; attempt < 200; attempt += 1) {
-      expect(looksLikeCode.test(generatePairingCode())).toBe(true);
+      expect(looksLikePairingCode(generatePairingCode())).toBe(true);
     }
   });
 
   it('still refuses the words that are commands', () => {
-    for (const command of ['status', 'start', 'pair', 'help', 'service']) {
-      expect(looksLikeCode.test(command)).toBe(false);
+    for (const command of COMMAND_WORDS) {
+      expect(looksLikePairingCode(command)).toBe(false);
+    }
+  });
+
+  /**
+   * The collision the other way round, which shipped the moment a command was named an eight-letter
+   * word. `projects` matches the code shape exactly, so `sorema projects` was sent to the pairing
+   * endpoint and came back `fetch failed` — no mention of projects, no mention of pairing.
+   *
+   * Scraped from the dispatch rather than listed here: a list written in a test is a second copy of
+   * the truth, and the next command added would collide in silence exactly as this one did.
+   */
+  it('knows about every word the command dispatches on', () => {
+    const dispatched = new Set(
+      Array.from(cliSource.matchAll(/command === '([a-z-]+)'/g), (match) => match[1] ?? ''),
+    );
+
+    expect(dispatched.size).toBeGreaterThan(0);
+    for (const word of dispatched) {
+      expect([...COMMAND_WORDS]).toContain(word);
     }
   });
 });

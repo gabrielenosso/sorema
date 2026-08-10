@@ -1,7 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
   findRottingPath,
   installGlobally,
@@ -89,6 +90,152 @@ describe('what gets written for each platform', () => {
     }
   });
 });
+
+/**
+ * Held against the service manager itself, because this is where believing the file cost a day.
+ *
+ * The task on the owner's machine carried `<RestartOnFailure><Count>3</Count><Interval>PT1M</Interval>`
+ * and had done since the installer was written. The agent exited 1, Task Scheduler recorded
+ * `Last Result: 1`, and it restarted nothing: the task sat in `Ready` while the web app showed the
+ * machine offline, and the owner had not rebooted, so the logon trigger was never coming round again.
+ *
+ * `RestartOnFailure` covers the scheduler being unable to launch the action. A program that launches,
+ * runs and exits non-zero is a completed run. Measured on this machine over 4.3 minutes: with only a
+ * logon trigger and `Count 3`, an action exiting 1 immediately ran **once**; with the repeating
+ * trigger below it ran **five times, one a minute**. Asserting the XML contained `RestartOnFailure`
+ * would have passed on the broken version, which is why these register the definition for real.
+ */
+const onWindows = process.platform === 'win32';
+// Never the name the installer uses. Registering under `Sorema Agent` would replace whatever the
+// developer running this actually has installed, and `/Delete` at the end would take it away.
+const ROUND_TRIP_TASK = 'Sorema Agent (test round trip)';
+
+function deleteTask(taskName: string): void {
+  try {
+    execFileSync('schtasks', ['/Delete', '/TN', taskName, '/F'], { stdio: 'ignore' });
+  } catch {
+    // Removing a task that was never registered is the state asked for.
+  }
+}
+
+function readRegisteredTask(taskName: string): string {
+  const bytes = execFileSync('schtasks', ['/Query', '/TN', taskName, '/XML'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  // schtasks answers UTF-16 to a console and the console codepage down a pipe, so the encoding is
+  // read off the byte order mark rather than assumed. Decoding the wrong one produces text that
+  // contains none of the tags being looked for, which reads exactly like a setting that was dropped.
+  return bytes[0] === 0xff && bytes[1] === 0xfe
+    ? bytes.toString('utf16le')
+    : bytes.toString('utf8');
+}
+
+function registerAndReadBack(contents: string, encoding: 'utf8' | 'utf16le'): string {
+  const home = mkdtempSync(join(tmpdir(), 'sorema-schtasks-'));
+  const file = join(home, 'task.xml');
+  writeFileSync(file, contents, { encoding });
+  deleteTask(ROUND_TRIP_TASK);
+  execFileSync('schtasks', ['/Create', '/TN', ROUND_TRIP_TASK, '/XML', file, '/F'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return readRegisteredTask(ROUND_TRIP_TASK);
+}
+
+describe.skipIf(!onWindows)('what Task Scheduler actually keeps', () => {
+  afterAll(() => deleteTask(ROUND_TRIP_TASK));
+
+  const plan = planService(process.execPath, [SCRIPT, 'start'], 'win32', mkdtempSync(join(tmpdir(), 'sorema-plan-')));
+
+  it('accepts the definition the installer writes', () => {
+    // Element order inside <Settings> and <Triggers> is schema-significant, and schtasks reports a
+    // rejection as a parse error at a line number rather than as anything about the setting.
+    expect(() => registerAndReadBack(plan.contents, plan.encoding)).not.toThrow();
+  });
+
+  it('keeps the repeating trigger, which is the part that restarts the agent', () => {
+    const stored = registerAndReadBack(plan.contents, plan.encoding);
+
+    expect(stored).toContain('<TimeTrigger>');
+    expect(stored).toContain('<Repetition>');
+    expect(stored).toContain('<Interval>PT1M</Interval>');
+  });
+
+  it('keeps the policy that stops the repeat from restarting a healthy agent', () => {
+    const stored = registerAndReadBack(plan.contents, plan.encoding);
+
+    // Measured: with this, a task whose action ran for four minutes was started once and the
+    // per-minute repeats were ignored. Without it the repeat is a restart every minute instead.
+    //
+    // Worth knowing what this assertion can and cannot fail on: `IgnoreNew` is Task Scheduler's own
+    // default, so *deleting* the line leaves the read-back saying `IgnoreNew` anyway and this still
+    // passes. What it catches is the policy being changed to `Parallel` or `StopExisting`, either of
+    // which turns the repeating trigger into a minute-by-minute restart of a healthy agent. Verified
+    // by reversion in exactly that form, because deleting the line proves nothing here.
+    expect(stored).toContain('IgnoreNew');
+  });
+
+  it('still starts at logon, and still only for its owner', () => {
+    const stored = registerAndReadBack(plan.contents, plan.encoding);
+
+    expect(stored).toContain('<LogonTrigger>');
+    expect(stored).toContain('<UserId>');
+  });
+
+  it('keeps the restart-on-failure settings, for the case they do cover', () => {
+    const stored = registerAndReadBack(plan.contents, plan.encoding);
+
+    expect(stored).toContain('<RestartOnFailure>');
+    expect(stored).toContain('<Count>3</Count>');
+  });
+});
+
+/**
+ * The behaviour itself, which takes minutes and so is asked for rather than run by default.
+ *
+ * `SOREMA_VERIFY_SERVICE_RESTART=1 npx vitest run cli/test/service.test.ts`
+ *
+ * Everything above proves the definition survives registration. This proves the thing the definition
+ * is for, against the real scheduler and a real process that dies — the claim that a green suite has
+ * no business making from a string comparison.
+ */
+describe.skipIf(!onWindows || process.env.SOREMA_VERIFY_SERVICE_RESTART !== '1')(
+  'a dead agent is started again',
+  () => {
+    afterAll(() => deleteTask(ROUND_TRIP_TASK));
+
+    it(
+      'runs again within a couple of minutes of its process exiting non-zero',
+      async () => {
+        const home = mkdtempSync(join(tmpdir(), 'sorema-restart-'));
+        const log = join(home, 'runs.txt');
+        // The real planner, with an action that behaves the way the agent did on the machine this
+        // was found on: it starts, records that it did, and exits 1.
+        const dying = planService(
+          join(String(process.env.SystemRoot ?? 'C:\\Windows'), 'System32', 'cmd.exe'),
+          ['/c', `echo ran >> ${log} & exit /b 1`],
+          'win32',
+          home,
+        );
+        registerAndReadBack(dying.contents, dying.encoding);
+        execFileSync('schtasks', ['/Run', '/TN', ROUND_TRIP_TASK], { stdio: 'ignore' });
+
+        const deadline = Date.now() + 200_000;
+        let runs = 0;
+        while (Date.now() < deadline && runs < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 5_000));
+          runs = existsSync(log)
+            ? readFileSync(log, 'utf8').split('\n').filter((line) => line.trim().length > 0).length
+            : 0;
+        }
+
+        // Two runs is the whole claim: the first is the one we asked for, the second is the
+        // scheduler bringing it back on its own. One run is what the shipped version did forever.
+        expect(runs).toBeGreaterThanOrEqual(2);
+      },
+      240_000,
+    );
+  },
+);
 
 describe('refusing to point at a path that will not last', () => {
   it.each([

@@ -130,11 +130,30 @@ WantedBy=default.target
 }
 
 /**
- * A scheduled task that runs at logon.
+ * A scheduled task that runs at logon, and keeps running.
  *
  * Written as XML and registered with `schtasks /XML` rather than assembled on a command line: the
  * executable path can contain spaces and quotes, and a task definition built by string concatenation
  * is a command injection waiting for a user whose Windows account is called something unusual.
+ *
+ * **`RestartOnFailure` is not what keeps this alive, and believing it did cost a machine that sat
+ * offline for a day.** The task was registered with `<RestartOnFailure><Count>3</Count>` all along,
+ * the agent exited 1, the scheduler recorded `Last Result: 1` — and it never restarted it once. That
+ * setting covers the scheduler being unable to *launch* the action; a program that launches, runs
+ * and exits non-zero is a completed run, not a failure it will retry. Measured on Windows 11 with a
+ * task whose action exits 1 immediately: over 4.3 minutes with `Count 3` and `Interval PT1M` it ran
+ * exactly once. The same task with the repeating trigger below ran five times, once a minute.
+ *
+ * So the thing that actually restarts the agent is the `TimeTrigger`: a boundary far in the past and
+ * an indefinite repetition, which asks the scheduler to start the task every minute, forever. The
+ * task no longer depends on a logon that may not happen again for weeks, which is the state the
+ * owner's machine was in — `Ready`, never rebooted, and nothing left to trigger it.
+ *
+ * `MultipleInstancesPolicy` is what makes that safe rather than a restart every minute: measured the
+ * same way, a task with this trigger whose action runs for four minutes was started **once**, and
+ * the repeats were ignored while it was alive. `IgnoreNew` is load-bearing here, not tidiness.
+ *
+ * `RestartOnFailure` is kept because the case it does cover is real and costs nothing.
  */
 function planScheduledTask(executable: string, argv: readonly string[], home: string): ServicePlan {
   const path = join(home, '.sorema', 'sorema-agent-task.xml');
@@ -151,6 +170,11 @@ function planScheduledTask(executable: string, argv: readonly string[], home: st
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger><Enabled>true</Enabled><UserId>${escapeXml(windowsUser())}</UserId></LogonTrigger>
+    <TimeTrigger>
+      <StartBoundary>2020-01-01T00:00:00</StartBoundary>
+      <Repetition><Interval>PT1M</Interval></Repetition>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
@@ -188,7 +212,7 @@ function planScheduledTask(executable: string, argv: readonly string[], home: st
       ['schtasks', '/Run', '/TN', 'Sorema Agent'],
     ],
     deactivate: [['schtasks', '/Delete', '/TN', 'Sorema Agent', '/F']],
-    describe: 'Task Scheduler, starting when you log in',
+    describe: 'Task Scheduler, starting when you log in and coming back if it stops',
   };
 }
 

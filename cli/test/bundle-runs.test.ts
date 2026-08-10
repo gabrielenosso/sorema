@@ -1,8 +1,9 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { writeWorkspaceRoots } from '../src/workspace-roots.js';
 
 const BUNDLE = join(import.meta.dirname, '..', 'dist', 'sorema.mjs');
 
@@ -118,6 +119,73 @@ describe.skipIf(!existsSync(BUNDLE))('the built command runs outside this test r
     expect(said).not.toMatch(/unable to determine transport target/);
     expect(said).toMatch(/listening/);
   });
+
+  /**
+   * The defect end to end, through the published artefact and a real agent.
+   *
+   * `system.workspaces` is the capability the assistant is told about, and it was `misconfigured` on
+   * every machine ever paired, because `LOCAL_AGENT_WORKSPACE_ROOTS` had no setter anywhere in this
+   * system. Nothing here is stubbed: the folder is chosen through the command's own store, the built
+   * bundle is what reads it, and the answer is taken off the agent's HTTP interface.
+   */
+  it('offers the chosen folder as projects, through the built command', async () => {
+    const state = mkdtempSync(join(tmpdir(), 'sorema-projects-'));
+    const code = join(state, 'CODE');
+    mkdirSync(join(code, 'alpha'), { recursive: true });
+    run(['status'], 20_000, {}, state);
+    pretendPaired(state);
+    writeWorkspaceRoots(state, [code]);
+
+    // Its own port, for the same reason the rest of this file uses one: the developer running this
+    // very likely has the real agent listening on the default.
+    const port = String(22_000 + (process.pid % 4_000));
+    const agent = spawn(process.execPath, [BUNDLE, 'start'], {
+      // Started outside any checkout, the way the installed command is: it runs from the global npm
+      // prefix, not from a repository. The agent loads a `.env` from whatever workspace it finds
+      // above its working directory, and the private repository's own gitignored `.env` sets
+      // `LOCAL_AGENT_WORKSPACE_ROOTS` — so with the cwd inherited, this test passed against a bundle
+      // that had none of this in it. That file is also the reason the defect stayed invisible for so
+      // long: projects appear when the agent is run from the checkout, and only from there.
+      cwd: state,
+      env: {
+        ...process.env,
+        NODE_ENV: undefined,
+        USERPROFILE: state,
+        HOME: state,
+        SOREMA_API_URL: 'https://example.invalid',
+        SOREMA_TUNNEL_URL: 'wss://example.invalid',
+        LOCAL_AGENT_STATE_DIR: state,
+        LOCAL_AGENT_DATABASE_URL: `file:${join(state, 'sorema.sqlite')}`,
+        LOCAL_AGENT_PORT: port,
+      },
+    });
+
+    try {
+      let capabilities: { id: string; status: string; details?: Record<string, unknown> }[] = [];
+      const deadline = Date.now() + 25_000;
+      while (Date.now() < deadline && capabilities.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        try {
+          const answer = await fetch(`http://127.0.0.1:${port}/capabilities`);
+          capabilities = (
+            (await answer.json()) as {
+              capabilities: { id: string; status: string; details?: Record<string, unknown> }[];
+            }
+          ).capabilities;
+        } catch {
+          // Not listening yet.
+        }
+      }
+
+      const workspaces = capabilities.find((entry) => entry.id === 'system.workspaces');
+      // `misconfigured` is what every user got, and it is the machine saying out loud that it has
+      // nowhere to work — which reached the conversation as "you have no projects".
+      expect(workspaces?.status).toBe('ready');
+      expect(JSON.stringify(workspaces?.details)).toContain('CODE');
+    } finally {
+      agent.kill('SIGTERM');
+    }
+  }, 40_000);
 
   it('lets the command and the agent read the same identity', () => {
     // They read different environment variables for a while, so `status` reported the machine paired

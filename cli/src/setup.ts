@@ -12,10 +12,13 @@ export type MachineState = {
   /** Null when the paths are durable; the reason when they are not. */
   rottingPath: string | null;
   serviceInstalled: boolean;
+  /** Whether anyone has said where this machine's code lives. Nothing used to ask. */
+  workspaceRootsConfigured: boolean;
 };
 
 export type SetupStep =
   | { action: 'pair'; code: string }
+  | { action: 'choose-projects' }
   | { action: 'install-globally' }
   | { action: 'install-service' }
   | { action: 'restart-service' }
@@ -53,13 +56,20 @@ export function planSetup(state: MachineState): SetupStep[] {
     steps.push({ action: 'install-globally' });
   }
 
+  // Asked before the service is started, because the service is where the answer is needed and it
+  // has no terminal to ask from. Asked whenever it is missing rather than only when pairing, so a
+  // machine paired by an earlier version — which never asked at all — is offered the question the
+  // next time this runs instead of staying silently empty.
+  if (!state.workspaceRootsConfigured) steps.push({ action: 'choose-projects' });
+
   if (!state.serviceInstalled) steps.push({ action: 'install-service' });
   // A service that was already running when the pairing happened is still answering as the machine
   // this one used to be: the new key is on disk, and the old socket is still open, so it has no
   // reason to reconnect and read it. The account shows the deleted machine online and the new one
   // as never having appeared. Nothing about that is visible from here, which is why it is done
-  // rather than mentioned.
-  else if (state.code) steps.push({ action: 'restart-service' });
+  // rather than mentioned. A folder chosen just now is the same problem in the other direction: the
+  // running service read the roots when it started and has no reason to look again.
+  else if (state.code || !state.workspaceRootsConfigured) steps.push({ action: 'restart-service' });
   // Installing already started it, and a second copy in this terminal would fight the first for the
   // socket. Reporting that is more useful than appearing to hang.
   steps.push({ action: 'already-running' });
