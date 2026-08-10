@@ -25,7 +25,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Pinned past 22.13, where `node:sqlite` stopped needing a flag. The daemon refuses to
+          # start below it, so building on an older runner would ship a command that dies on the
+          # first database call.
+          node-version: '22.13'
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile
@@ -42,7 +45,11 @@ jobs:
           SOREMA_API_URL: ${{ secrets.SOREMA_API_URL }}
           SOREMA_TUNNEL_URL: ${{ secrets.SOREMA_TUNNEL_URL }}
 
+      # Trusted publishing authenticates with the OIDC token GitHub mints for this workflow, so
+      # there is no long-lived npm credential anywhere — not in this file, not in a repository
+      # secret, not on anyone's laptop. It needs npm 11.5.1 or newer, which the Node 22 runner does
+      # not ship.
+      - run: npm install --global npm@latest
+
       - run: npm publish --provenance --access public
         working-directory: cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
