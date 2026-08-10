@@ -55,4 +55,15 @@ export const LOCAL_AGENT_MIGRATION_STATEMENTS: readonly string[] = [
   // Dropping rather than merely abandoning it, because rows no code can reach are not a trail: they
   // are disk, and leaving them punishes exactly the users who ran the old build longest.
   'DROP TABLE IF EXISTS audit_log',
+  // Left behind by the gateway era and by 0.9.0, which shipped from a checkout that still had them.
+  // Nothing reads either one now, so on disk they are only somebody's job history and command
+  // history sitting where no code will ever look at it again.
+  'DROP TABLE IF EXISTS outbox',
+  'DROP TABLE IF EXISTS processed_commands',
+  // Left behind by the gateway era and by 0.9.0, which shipped from a checkout that still had them.
+  // Nothing reads either one now, so on disk they are only somebody's job history and command
+  // history sitting where no code will ever look at it again.
+  // Left behind by the gateway era and by 0.9.0, which shipped from a checkout that still had them.
+  // Nothing reads either one now, so on disk they are only somebody's job history and command
+  // history sitting where no code will ever look at it again.
 ];

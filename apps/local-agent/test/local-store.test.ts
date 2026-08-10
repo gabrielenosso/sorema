@@ -199,3 +199,36 @@ describe('a database written by the better-sqlite3 build', () => {
     expect(tableNames(database)).toEqual(['domain_sessions', 'jobs']);
   });
 });
+
+/**
+ * The tables the gateway era left behind, and that 0.9.0 shipped again.
+ *
+ * The legacy fixture predates them, so nothing else in this file can see whether they are dropped —
+ * and a `DROP TABLE` nobody exercises is a line that looks like a migration and is not one. This
+ * builds the table by hand, on the same database shape, and watches it go.
+ */
+describe('the tables no code reads any more', () => {
+  it('drops outbox and processed_commands from a database that has them', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'sorema-legacy-tables-'));
+    const path = join(directory, 'sorema.sqlite');
+
+    // Fetched late, the same way the store does: a static import of node:sqlite is linked before
+    // any statement runs, which is what would kill the version check on an older Node.
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const before = new DatabaseSync(path);
+    before.exec('CREATE TABLE outbox (id TEXT PRIMARY KEY, payload TEXT NOT NULL)');
+    before.exec('CREATE TABLE processed_commands (id TEXT PRIMARY KEY, seen_at TEXT NOT NULL)');
+    before.exec("INSERT INTO outbox VALUES ('one', '{}')");
+    before.close();
+
+    const database = createLocalAgentDatabase(`file:${path}`);
+    try {
+      expect(tableNames(database)).not.toContain('outbox');
+      expect(tableNames(database)).not.toContain('processed_commands');
+      // And the tables that carry real history are untouched by the same migration run.
+      expect(tableNames(database)).toEqual(['domain_sessions', 'jobs']);
+    } finally {
+      database.close();
+    }
+  });
+});
