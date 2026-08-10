@@ -20,6 +20,18 @@ export function resolveFromWorkspaceRoot(relativeOrAbsolutePath: string): string
   return resolve(findWorkspaceRoot(), relativeOrAbsolutePath);
 }
 
+/**
+ * Where a running agent publishes its process id.
+ *
+ * Two halves need this path and neither owns the other: the agent writes it once it holds the
+ * loopback port, and the installer reads it to stop that agent on a platform whose service manager
+ * will not. Named once because a path restated in two places drifts, and the way it would fail is a
+ * stop that silently stops nothing.
+ */
+export function agentProcessIdPath(stateDirectory: string): string {
+  return resolve(stateDirectory, 'agent.pid');
+}
+
 let dotenvLoaded = false;
 
 export function loadEnvironmentFiles(startDirectory: string = process.cwd()): void {
