@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { platform } from 'node:os';
 import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { SoremaError, type Capability, type SoremaEvent } from '@sorema/domain-model';
 import { InMemoryEventBus, type EventBus } from '@sorema/event-bus';
-import { MetricsRegistry, createLogger, type Logger } from '@sorema/observability';
-import type { CommandRequestMessage, DeviceCommand } from '@sorema/protocol';
+import { createLogger, type Logger } from '@sorema/observability';
+import type { DeviceCommand } from '@sorema/protocol';
 import { resolveFromWorkspaceRoot, type LocalAgentConfig } from '@sorema/config';
 import { createLocalAgentDatabase, type LocalAgentDatabase } from './db/client.js';
 import { LocalStore } from './store/local-store.js';
@@ -18,7 +17,6 @@ import { ClaudeCodeProvider } from './domains/coding/providers/claude-code-provi
 import type { CodingProvider } from './domains/coding/provider-types.js';
 import type { DomainAdapter } from './domains/domain-adapter.js';
 import { LOCAL_AGENT_VERSION, detectCapabilities } from './capabilities/capability-detector.js';
-import { TunnelClient } from './tunnel/tunnel-client.js';
 import { CloudTunnelClient } from './tunnel/cloud-tunnel-client.js';
 import { openCloudSocket } from './tunnel/cloud-socket.js';
 import { CommandRateLimiter } from './process/command-rate-limiter.js';
@@ -30,7 +28,6 @@ export type LocalAgent = {
   identity: DeviceIdentityStore;
   projectRegistry: ProjectRegistry;
   codingAdapter: CodingDomainAdapter;
-  tunnelClient: TunnelClient;
   eventBus: EventBus;
   logger: Logger;
   loopbackServer: FastifyInstance;
@@ -64,13 +61,50 @@ export function buildCodingProviders(config: LocalAgentConfig, logger: Logger): 
   return providers;
 }
 
+/**
+ * Which job events travel to the cloud unprompted, and what the cloud should call them.
+ *
+ * The end of a job has always travelled: whoever started it may have closed the tab, so the news has
+ * to be written down where it can wait. `spokenSummary` is preferred because it is the sentence
+ * written to be read aloud.
+ *
+ * The beginning travels for a different reason. `get_job_status` is answered from the row the cloud
+ * keeps, and until the machine has said something there is no row — so asking about a task that was
+ * running answered "no job with that id", which the assistant reads out as the task not existing.
+ * Two writes per job buy a truthful answer for the whole of its life.
+ *
+ * Progress deliberately does not travel. It arrives once per line the coding agent prints, and each
+ * one would be a write to a table whose capacity every tenant shares, to move a number nobody says
+ * out loud. What a job is doing right now is a question for the machine, which is awake if it is
+ * running the job.
+ */
+export function jobUpdateForCloud(
+  event: SoremaEvent,
+): { jobId: string; status: string; summary: string } | null {
+  const payload = event.payload as { jobId?: string; spokenSummary?: string; summary?: string };
+  if (!payload.jobId) return null;
+
+  if (event.type === 'job.queued') return { jobId: payload.jobId, status: 'queued', summary: '' };
+  if (event.type === 'job.started') return { jobId: payload.jobId, status: 'running', summary: '' };
+  if (event.type === 'job.completed') {
+    return {
+      jobId: payload.jobId,
+      status: 'succeeded',
+      summary: payload.spokenSummary ?? payload.summary ?? '',
+    };
+  }
+  if (event.type === 'job.failed' || event.type === 'job.cancelled') {
+    return { jobId: payload.jobId, status: 'failed', summary: '' };
+  }
+  return null;
+}
+
 export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
   const logger = createLogger(
     'local-agent',
     config.logLevel,
     config.nodeEnvironment !== 'production',
   );
-  const metrics = new MetricsRegistry();
   const database = createLocalAgentDatabase(config.databaseUrl);
   const store = new LocalStore(database);
   const identity = new DeviceIdentityStore(resolveFromWorkspaceRoot(config.stateDirectory));
@@ -82,33 +116,14 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     );
   });
 
-  /**
-   * The end of a job is the only thing the cloud needs pushed to it unprompted.
-   *
-   * Everything else it asks for and waits on. A finished job is different: whoever started it may
-   * have closed the tab, so the news has to travel on its own and be written down where it can wait.
-   * `spokenSummary` is preferred because it is the sentence written to be read aloud.
-   */
   const reportJobToCloud = (event: SoremaEvent): void => {
     if (!cloudTunnel) return;
-    const payload = event.payload as { jobId?: string; spokenSummary?: string; summary?: string };
-    if (!payload.jobId) return;
-
-    if (event.type === 'job.completed') {
-      cloudTunnel.reportJob({
-        jobId: payload.jobId,
-        status: 'succeeded',
-        summary: payload.spokenSummary ?? payload.summary ?? '',
-      });
-    }
-    if (event.type === 'job.failed' || event.type === 'job.cancelled') {
-      cloudTunnel.reportJob({ jobId: payload.jobId, status: 'failed', summary: '' });
-    }
+    const update = jobUpdateForCloud(event);
+    if (update) cloudTunnel.reportJob(update);
   };
 
   const publishEvent = (event: SoremaEvent): void => {
     void eventBus.publish(event);
-    tunnelClient.publishEvent(event);
     reportJobToCloud(event);
   };
 
@@ -131,11 +146,10 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
   const rateLimiter = new CommandRateLimiter();
 
   /**
-   * One command, run once, whichever transport carried it.
+   * One command, run once, whatever asked for it.
    *
-   * Extracted because there are now two: the gateway on this machine, and the cloud tunnel. Letting
-   * each build its own dispatch would mean the rate limiter, the domain routing and the refusal
-   * messages drifting apart, and the difference showing up only on whichever one is used less.
+   * The rate limiter, the domain routing and the refusal messages live here rather than in the
+   * transport, so a second caller cannot end up with its own slightly different dispatch.
    */
   const runCommand = async (
     command: DeviceCommand,
@@ -171,38 +185,7 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     });
   };
 
-  const handleCommand = async (message: CommandRequestMessage): Promise<unknown> =>
-    runCommand(message.payload.command, {
-      userId: message.userId ?? identity.userId ?? 'unpaired',
-      deviceId: identity.deviceId ?? 'unpaired',
-      correlationId: message.correlationId,
-      idempotencyKey: message.payload.idempotencyKey,
-    });
-
-  const tunnelClient = new TunnelClient({
-    gatewayTunnelUrl: config.gatewayTunnelUrl,
-    identity,
-    store,
-    logger,
-    metrics,
-    deviceName: config.deviceName,
-    agentVersion: LOCAL_AGENT_VERSION,
-    platform: platform(),
-    getCapabilities,
-    handleCommand,
-    reconnectInitialDelayMs: config.reconnectInitialDelayMs,
-    reconnectMaxDelayMs: config.reconnectMaxDelayMs,
-    heartbeatIntervalMs: config.heartbeatIntervalMs,
-    outboxFlushIntervalMs: config.outboxFlushIntervalMs,
-  });
-
-  /**
-   * The cloud transport, present only when a deployment has been named.
-   *
-   * Both can exist at once without conflicting: they carry the same commands to the same executor,
-   * and a machine that has been paired with a deployment but still has a gateway running locally is
-   * a perfectly ordinary state during a migration.
-   */
+  /** The transport, present only when a deployment has been named. */
   const cloudTunnel = config.cloudTunnelUrl
     ? new CloudTunnelClient({
         tunnelUrl: config.cloudTunnelUrl,
@@ -229,7 +212,7 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     status: 'ok',
     version: LOCAL_AGENT_VERSION,
     paired: identity.isPaired,
-    tunnel: tunnelClient.describeStatus(),
+    tunnel: { connected: cloudTunnel?.isConnected ?? false },
     demoMode: config.demoMode,
   }));
 
@@ -249,7 +232,6 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     identity,
     projectRegistry,
     codingAdapter,
-    tunnelClient,
     eventBus,
     logger,
     loopbackServer,
@@ -274,13 +256,11 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
           'marked jobs as interrupted after restart',
         );
       }
-      tunnelClient.start();
       cloudTunnel?.start();
     },
     close: async () => {
       await codingAdapter.shutdown();
       cloudTunnel?.stop();
-      await tunnelClient.stop();
       await loopbackServer.close();
       database.close();
     },

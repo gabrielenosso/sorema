@@ -27,10 +27,9 @@ export type CloudTunnelOptions = {
 /**
  * The daemon's side of the cloud tunnel.
  *
- * The old gateway authenticated with a challenge it sent after the socket opened. API Gateway offers
- * no such round trip: a WebSocket upgrade is one request, and either it is authorized or there is no
- * connection. So the proof travels in the headers of the upgrade itself — a signature over the
- * current time, made with the key this machine generated when it was paired.
+ * API Gateway offers no post-upgrade handshake: a WebSocket upgrade is one request, and either it is
+ * authorized or there is no connection. So the proof travels in the headers of the upgrade itself —
+ * a signature over the current time, made with the key this machine generated when it was paired.
  *
  * That the proof is single-use on the server is why a fresh timestamp is signed for every attempt
  * rather than one being cached and reused on reconnect.
@@ -109,8 +108,8 @@ export class CloudTunnelClient {
   private scheduleReconnect(): void {
     if (this.stopping) return;
     const delay = this.reconnectDelayMs;
-    // Backing off matters more here than it did against our own gateway: a device whose signature is
-    // being rejected would otherwise hammer an authorizer that costs money per invocation.
+    // A device whose signature is being rejected would otherwise hammer an authorizer that costs
+    // money per invocation.
     this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, this.maxDelayMs);
     this.schedule(() => this.connect(), delay);
   }

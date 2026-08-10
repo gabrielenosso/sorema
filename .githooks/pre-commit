@@ -1,0 +1,7 @@
+#!/bin/sh
+# Nothing naming the deployment gets into a public history. Once it is committed and pushed it is
+# published, and an AWS account id is not something anybody can rotate afterwards.
+#
+# Staged changes only, so the cost is proportional to the commit. `pnpm check:forbidden-strings
+# --history` is the wider sweep, and it runs in the test suite.
+exec node "$(git rev-parse --show-toplevel)/scripts/check-forbidden-strings.mjs" --staged

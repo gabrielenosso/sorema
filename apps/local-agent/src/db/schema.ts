@@ -41,20 +41,6 @@ export const LOCAL_AGENT_MIGRATION_STATEMENTS: readonly string[] = [
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
-  `CREATE TABLE IF NOT EXISTS outbox (
-    event_id TEXT PRIMARY KEY,
-    payload_json TEXT NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    next_attempt_at TEXT NOT NULL,
-    acknowledged_at TEXT,
-    created_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS processed_commands (
-    idempotency_key TEXT PRIMARY KEY,
-    command_name TEXT NOT NULL,
-    result_json TEXT NOT NULL,
-    processed_at TEXT NOT NULL
-  )`,
   // `audit_log` is gone rather than capped, and this statement is here so it goes from the machines
   // that already have it as well as from the ones that do not.
   //

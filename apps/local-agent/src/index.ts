@@ -7,7 +7,7 @@ const agent = buildLocalAgent(loadLocalAgentConfig());
 
 if (!agent.identity.isPaired) {
   agent.logger.warn(
-    'This local agent is not paired yet. Run "pnpm pair" from the repository root to pair it with the gateway.',
+    'This local agent is not paired yet. Run "pnpm pair <CODE>" from the repository root, with the code the web app shows.',
   );
 }
 

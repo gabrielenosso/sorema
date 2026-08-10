@@ -15,9 +15,9 @@ export const DEFAULT_COMMAND_RATE_LIMITS: CommandRateLimiterOptions = {
 const JOB_STARTING_COMMANDS = new Set(['task.start', 'task.continue']);
 
 /**
- * Last line of defence between a misbehaving model and the user's machine. The gateway already
- * validates and de-duplicates commands, but nothing upstream bounds how *often* they arrive, and a
- * looping model would otherwise be able to spawn coding processes without limit.
+ * Last line of defence between a misbehaving model and the user's machine. The cloud already
+ * validates each command against the tool schema, but nothing upstream bounds how *often* they
+ * arrive, and a looping model would otherwise be able to spawn coding processes without limit.
  */
 export class CommandRateLimiter {
   private readonly options: CommandRateLimiterOptions;

@@ -113,7 +113,11 @@ export class CodingDomainAdapter implements DomainAdapter {
         return { job: stripLocalJobFields(job) };
       }
       case 'job.cancel':
-        return this.cancelJob(command.command.payload.jobId, command.command.payload.reason);
+        return this.cancelJob(
+          command.command.payload.jobId,
+          command.command.payload.confirmed,
+          command.command.payload.reason,
+        );
       case 'task.start':
         return this.startTask(command);
       case 'task.continue':
@@ -445,7 +449,26 @@ export class CodingDomainAdapter implements DomainAdapter {
     });
   }
 
-  private async cancelJob(jobId: string, reason?: string): Promise<unknown> {
+  /**
+   * The machine is the last place that can refuse, so it is the place that must.
+   *
+   * The protocol has carried `confirmed` all along and this ignored it, which made the flag
+   * decorative: anything that reached the tunnel — a second client, a replayed frame, a cloud with
+   * the guard removed — stopped a running agent mid-edit without anybody having been asked. The
+   * cloud refuses first so the user is not made to wait a round trip to hear the question, but that
+   * one is a courtesy and this one is the guarantee.
+   */
+  private async cancelJob(jobId: string, confirmed: boolean, reason?: string): Promise<unknown> {
+    if (!confirmed) {
+      throw SoremaError.of(
+        'APPROVAL_REQUIRED',
+        'Cancellation was requested without explicit user confirmation',
+        {
+          userMessage:
+            'Cancelling can leave half-finished changes on disk. Do you want me to stop it anyway?',
+        },
+      );
+    }
     const job = this.options.store.findJob(jobId);
     if (!job) throw SoremaError.of('JOB_NOT_FOUND', `No job with id ${jobId}`);
     if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
@@ -466,8 +489,9 @@ export class CodingDomainAdapter implements DomainAdapter {
     return { jobId, cancelled: true, status: 'cancelled' as const };
   }
 
+  /** The adapter's own hook, reached only from inside this process, where nobody is there to ask. */
   async cancel(jobId: string): Promise<void> {
-    await this.cancelJob(jobId, 'cancelled by the user');
+    await this.cancelJob(jobId, true, 'cancelled by the user');
   }
 
   async getStatus(jobId: string): Promise<JobStatus> {

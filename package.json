@@ -13,7 +13,9 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "check:forbidden-strings": "node scripts/check-forbidden-strings.mjs",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

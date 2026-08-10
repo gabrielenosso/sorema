@@ -1,21 +1,8 @@
 import type { SQLOutputValue } from 'node:sqlite';
-import {
-  nowIsoTimestamp,
-  TERMINAL_JOB_STATUSES,
-  type SoremaEvent,
-  type DomainSession,
-  type Job,
-} from '@sorema/domain-model';
+import { TERMINAL_JOB_STATUSES, type DomainSession, type Job } from '@sorema/domain-model';
 import type { LocalAgentDatabase } from '../db/client.js';
 
 export type LocalJob = Job & { instruction: string; providerId: string };
-
-export type OutboxEntry = {
-  eventId: string;
-  event: SoremaEvent;
-  attempts: number;
-  nextAttemptAt: string;
-};
 
 type Row = Record<string, SQLOutputValue>;
 
@@ -48,13 +35,6 @@ const SAVE_DOMAIN_SESSION = `INSERT OR REPLACE INTO domain_sessions (
     :status, :metadataJson, :createdAt, :updatedAt
   )`;
 
-/**
- * Delay before the *next* attempt, indexed by how many attempts have already been made. The first
- * send happens immediately when the event is queued, so index 0 is a retry delay and must be
- * greater than zero: a zero here makes an unacknowledged event resend on every flush tick.
- */
-const BACKOFF_SCHEDULE_MS = [1_000, 5_000, 15_000, 60_000, 300_000];
-
 function parseJson<T>(raw: string | undefined, fallback: T): T {
   if (!raw) return fallback;
   try {
@@ -75,12 +55,6 @@ function readText(row: Row, column: string): string {
 function readOptionalText(row: Row, column: string): string | undefined {
   const value = row[column];
   return typeof value === 'string' ? value : undefined;
-}
-
-function readInteger(row: Row, column: string): number {
-  const value = row[column];
-  if (typeof value !== 'number') throw new Error(`Column ${column} does not hold a number`);
-  return value;
 }
 
 function readOptionalInteger(row: Row, column: string): number | undefined {
@@ -219,80 +193,5 @@ export class LocalStore {
           (!providerId || session.providerId === providerId),
       ) ?? null
     );
-  }
-
-  enqueueOutboxEvent(event: SoremaEvent): void {
-    const timestamp = nowIsoTimestamp();
-    // `OR IGNORE`, so re-queueing an event keeps the schedule the first attempt is already on rather
-    // than resetting its backoff.
-    this.database
-      .prepare(
-        `INSERT OR IGNORE INTO outbox (event_id, payload_json, attempts, next_attempt_at, created_at)
-         VALUES (?, ?, 0, ?, ?)`,
-      )
-      .run(event.eventId, JSON.stringify(event), timestamp, timestamp);
-  }
-
-  listDueOutboxEntries(limit = 25, now: Date = new Date()): OutboxEntry[] {
-    return this.database
-      .prepare(
-        `SELECT * FROM outbox
-         WHERE acknowledged_at IS NULL AND next_attempt_at <= ?
-         ORDER BY created_at ASC
-         LIMIT ?`,
-      )
-      .all(now.toISOString(), limit)
-      .map((row) => ({
-        eventId: readText(row, 'event_id'),
-        event: parseJson<SoremaEvent>(
-          readOptionalText(row, 'payload_json'),
-          null as unknown as SoremaEvent,
-        ),
-        attempts: readInteger(row, 'attempts'),
-        nextAttemptAt: readText(row, 'next_attempt_at'),
-      }))
-      .filter((entry) => entry.event !== null);
-  }
-
-  countPendingOutboxEntries(): number {
-    const row = this.database
-      .prepare('SELECT COUNT(*) AS pending FROM outbox WHERE acknowledged_at IS NULL')
-      .get();
-    return row ? readInteger(row, 'pending') : 0;
-  }
-
-  acknowledgeOutboxEvent(eventId: string): void {
-    this.database
-      .prepare('UPDATE outbox SET acknowledged_at = ? WHERE event_id = ?')
-      .run(nowIsoTimestamp(), eventId);
-  }
-
-  recordOutboxDeliveryAttempt(eventId: string, attempts: number): void {
-    const delayMs =
-      BACKOFF_SCHEDULE_MS[Math.min(attempts, BACKOFF_SCHEDULE_MS.length - 1)] ??
-      BACKOFF_SCHEDULE_MS.at(-1) ??
-      60_000;
-    this.database
-      .prepare('UPDATE outbox SET attempts = ?, next_attempt_at = ? WHERE event_id = ?')
-      .run(attempts + 1, new Date(Date.now() + delayMs).toISOString(), eventId);
-  }
-
-  findProcessedCommand(idempotencyKey: string): unknown | null {
-    const row = this.database
-      .prepare('SELECT result_json FROM processed_commands WHERE idempotency_key = ?')
-      .get(idempotencyKey);
-    return row ? parseJson<unknown>(readOptionalText(row, 'result_json'), null) : null;
-  }
-
-  recordProcessedCommand(idempotencyKey: string, commandName: string, result: unknown): void {
-    // `OR IGNORE`, because the first answer a command gave is the one already spoken to the user;
-    // replacing it would let a retry rewrite history.
-    this.database
-      .prepare(
-        `INSERT OR IGNORE INTO processed_commands
-           (idempotency_key, command_name, result_json, processed_at)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .run(idempotencyKey, commandName, JSON.stringify(result), nowIsoTimestamp());
   }
 }

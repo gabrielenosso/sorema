@@ -27,12 +27,14 @@ export default typescriptEslint.config(
     },
   },
   {
-    files: ['**/test/**/*.ts', '**/cli/**/*.ts'],
+    files: ['**/test/**/*.ts', '**/cli/**/*.ts', 'scripts/**/*.ts'],
     rules: { 'no-console': 'off' },
   },
   {
     files: ['**/*.mjs'],
-    languageOptions: { globals: { process: 'readonly', console: 'readonly' } },
+    languageOptions: {
+      globals: { process: 'readonly', console: 'readonly', fetch: 'readonly' },
+    },
     rules: { 'no-console': 'off' },
   },
 );

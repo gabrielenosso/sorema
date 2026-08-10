@@ -26,6 +26,11 @@ The cloud side — the API, the coordination, the storage — is not in this rep
 That is the same split Tailscale makes, and for the same reason: what runs on your machine should be
 auditable; what runs on ours is the service.
 
+**The protocol is here too, not only the agent**, in `packages/protocol`, `packages/security` and
+`packages/domain-model`. An open agent speaking a closed protocol would prove nothing: you could read
+the code and still not know what it was saying. The service imports these packages from here rather
+than keeping its own copy, so what you can read is what it speaks.
+
 ## Install
 
 ```bash
@@ -50,6 +55,11 @@ SOREMA_API_URL=… SOREMA_TUNNEL_URL=… pnpm build
 
 The published command has the service's addresses compiled in. A build from source does not, and will
 say so — supply your own, or point it at your own deployment.
+
+`pnpm install` points git at `.githooks`, whose `pre-commit` runs
+`scripts/check-forbidden-strings.mjs` over the staged changes. It refuses anything shaped like an AWS
+address — an API Gateway endpoint, a CloudFront domain, an account id — because a public history
+cannot be taken back. `pnpm check:forbidden-strings --history` sweeps every commit.
 
 ## Verify what you installed
 
