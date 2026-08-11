@@ -81,8 +81,32 @@ export function expandWorkspaceRoot(candidate: string, home: string = homedir())
   return resolve(expanded);
 }
 
+/**
+ * Whether a shell ate the backslashes on the way here.
+ *
+ * `sorema projects C:\Users\me\CODE` in Git Bash arrives as `C:UsersmeCODE`, because the shell
+ * reads each backslash as an escape. Windows then resolves that against the current directory of
+ * drive C rather than its root, so it lands somewhere the user has never heard of — and the message
+ * they get names a folder they did not type, which reads as the command being broken rather than
+ * the shell having rewritten their argument.
+ */
+function looksLikeSwallowedSeparators(typed: string): boolean {
+  const BACKSLASH = String.fromCharCode(92);
+  if (typed.includes('/') || typed.includes(BACKSLASH)) return false;
+  return /^[A-Za-z]:./.test(typed);
+}
+
 /** Null when the folder can be used. A sentence naming the problem when it cannot. */
-export function describeWorkspaceRootProblem(absolutePath: string): string | null {
+export function describeWorkspaceRootProblem(
+  absolutePath: string,
+  typed: string = absolutePath,
+): string | null {
+  if (looksLikeSwallowedSeparators(typed)) {
+    return (
+      `${typed} has no separators in it, so your shell probably ate the backslashes. ` +
+      'Write it with forward slashes instead, like C:/Users/you/CODE'
+    );
+  }
   // The root of a drive is every file on the machine, which is never what somebody means by "where
   // my code lives" and is the one wrong answer nobody notices until an agent edits something else.
   if (dirname(absolutePath) === absolutePath) return `${absolutePath} is a whole drive`;

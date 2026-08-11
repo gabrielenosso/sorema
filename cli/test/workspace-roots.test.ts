@@ -195,3 +195,19 @@ describe('what it offers before anyone has typed anything', () => {
     expect(describeWorkspaceRootProblem(String(suggestion))).toBeNull();
   });
 });
+
+describe('a path whose separators the shell ate', () => {
+  it('says what happened rather than naming a folder nobody typed', () => {
+    // Git Bash turns C:\Users\me\CODE into C:UsersmeCODE, and Windows resolves that against the
+    // current directory of drive C — so the old message named a VS Code folder the user had never
+    // mentioned, which reads as the command being broken.
+    const problem = describeWorkspaceRootProblem('C:/somewhere/else/UsersmeCODE', 'C:UsersmeCODE');
+
+    expect(problem).toContain('your shell probably ate the backslashes');
+    expect(problem).toContain('C:UsersmeCODE');
+  });
+
+  it('leaves a real path alone', () => {
+    expect(describeWorkspaceRootProblem(process.cwd(), process.cwd())).toBeNull();
+  });
+});

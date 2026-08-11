@@ -29,7 +29,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.9.4';
+const VERSION = '0.9.5';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -330,7 +330,9 @@ async function main(): Promise<number> {
     const chosen: string[] = [];
     for (const value of requested) {
       const expanded = expandWorkspaceRoot(value);
-      const problem = describeWorkspaceRootProblem(expanded);
+      // Both, because the resolved path no longer shows what the person typed: a shell that ate the
+      // backslashes leaves a plausible-looking absolute path pointing somewhere they never named.
+      const problem = describeWorkspaceRootProblem(expanded, value);
       if (problem) {
         process.stderr.write(`Not changing anything: ${problem}.\n`);
         return 1;
