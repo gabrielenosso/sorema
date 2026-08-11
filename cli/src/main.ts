@@ -29,7 +29,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.9.5';
+const VERSION = '0.9.6';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -151,9 +151,12 @@ async function chooseWorkspaceRoots(): Promise<void> {
   try {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const answer = await question.question(suggestion ? `Folder [${suggestion}]: ` : 'Folder: ');
-      const chosen = answer.trim().length > 0 ? expandWorkspaceRoot(answer) : suggestion;
+      const typed = answer.trim();
+      const chosen = typed.length > 0 ? expandWorkspaceRoot(typed) : suggestion;
       if (!chosen) continue;
-      const problem = describeWorkspaceRootProblem(chosen);
+      // Both, for the same reason as in `projects`: once resolved, a drive-relative path looks like
+      // a perfectly ordinary absolute one pointing at a folder nobody named.
+      const problem = describeWorkspaceRootProblem(chosen, typed.length > 0 ? typed : chosen);
       if (problem) {
         process.stdout.write(`${problem}.\n`);
         continue;
