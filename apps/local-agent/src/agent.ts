@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { SoremaError, type Capability, type SoremaEvent } from '@sorema/domain-model';
@@ -52,6 +51,7 @@ export function buildCodingProviders(config: LocalAgentConfig, logger: Logger): 
   providers.push(
     new ClaudeCodeProvider({
       executablePath: config.claudeCodeExecutablePath,
+      chromeEnabled: config.claudeCodeChromeEnabled,
       stateDirectory: resolve(resolveFromWorkspaceRoot(config.stateDirectory), 'claude'),
       jobTimeoutMs: config.jobTimeoutMs,
       maxOutputBytes: config.maxJobOutputBytes,
@@ -119,7 +119,7 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
   const reportJobToCloud = (event: SoremaEvent): void => {
     if (!cloudTunnel) return;
     const update = jobUpdateForCloud(event);
-    if (update) cloudTunnel.reportJob(update);
+    if (update) cloudTunnel.reportJob({ ...update, deviceId: identity.deviceId ?? 'unpaired' });
   };
 
   const publishEvent = (event: SoremaEvent): void => {
@@ -194,14 +194,12 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
         log: (message, detail) => logger.info(detail ?? {}, message),
         reconnectInitialDelayMs: config.reconnectInitialDelayMs,
         reconnectMaxDelayMs: config.reconnectMaxDelayMs,
-        handleCommand: (command) =>
+        handleCommand: (command, requestId) =>
           runCommand(command as DeviceCommand, {
             userId: identity.userId ?? 'unpaired',
             deviceId: identity.deviceId ?? 'unpaired',
-            correlationId: randomUUID(),
-            // The cloud gives each tool call its own request id and waits on it, so a retry of the
-            // same call is a different request; there is nothing here to deduplicate against.
-            idempotencyKey: randomUUID(),
+            correlationId: requestId,
+            idempotencyKey: requestId,
           }),
       })
     : null;

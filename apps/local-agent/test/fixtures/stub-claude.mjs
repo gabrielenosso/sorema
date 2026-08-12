@@ -7,6 +7,7 @@ if (args.includes('--version')) {
 }
 
 if (args.includes('--help')) {
+  const chromeHelp = args.includes('--stub-no-chrome') ? [] : ['      --chrome'];
   process.stdout.write(
     [
       'Usage: claude [options] [command] [prompt]',
@@ -16,6 +17,7 @@ if (args.includes('--help')) {
       '      --session-id <uuid>',
       '  -r, --resume [value]',
       '      --permission-mode <mode>',
+      ...chromeHelp,
       '      --add-dir <directories...>',
       '      --dangerously-skip-permissions',
       '',

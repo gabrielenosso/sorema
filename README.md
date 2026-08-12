@@ -21,6 +21,8 @@ can be checked rather than believed:
   operations implemented here, each one validated against a schema on the way in and on the way out.
 - Instructions reach a coding agent on stdin, never on a command line, so no shell metacharacter path
   exists on any platform.
+- Claude Code browser access is off by default. It is only enabled when you explicitly run
+  `sorema chrome enable` and the installed Claude CLI advertises `--chrome` support.
 
 The cloud side — the API, the coordination, the storage — is not in this repository and is not open.
 That is the same split Tailscale makes, and for the same reason: what runs on your machine should be
@@ -44,6 +46,22 @@ again any time — it works out what is already done and does only the rest.
 without it a machine keeps running whatever copy it already had.
 
 The code comes from the web app, under "Pair your computer".
+
+### Optional: let Claude Code use Chrome
+
+Chrome access lets Claude Code act through the browser profile configured on this machine, which can
+include signed-in websites. That is more authority than project-only work, so Sorema never enables
+it automatically. Grant it explicitly with:
+
+```bash
+sorema chrome enable
+```
+
+The choice is stored in your local per-user Sorema state (mode `0600` on POSIX) and the command restarts an installed service,
+so it still applies after logout or reboot. The installed Claude Code must list `--chrome` in
+`claude --help`; otherwise Sorema leaves browser access disabled and reports that state in the
+machine's `coding.claude` capability. Run `sorema chrome status` to inspect the choice and
+`sorema chrome disable` to revoke it.
 
 ## Build it yourself
 

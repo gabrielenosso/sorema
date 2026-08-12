@@ -29,8 +29,11 @@ without it a machine keeps running whatever copy it already had.
   nothing.
 - There is no `exec` tool. The assistant cannot ask it to run an arbitrary command; it can only ask
   for the operations this program implements.
+- Claude Code cannot use Chrome by default. Run `sorema chrome enable` to opt in; Sorema stores that
+  choice in local per-user state (mode `0600` on POSIX), restarts an installed service, and passes `--chrome` only when
+  the installed Claude CLI advertises support. Browser access can reach signed-in websites. Inspect
+  it with `sorema chrome status` and revoke it with `sorema chrome disable`.
 
 ## Licence
 
-Elastic License 2.0. You may read it, run it, and modify it for yourself. You may not offer it to
-other people as a hosted or managed service. See [LICENSE](./LICENSE).
+GNU Affero General Public License v3.0 only (AGPL-3.0-only). See [LICENSE](./LICENSE).

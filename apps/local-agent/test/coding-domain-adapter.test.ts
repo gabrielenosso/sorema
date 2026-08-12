@@ -58,7 +58,7 @@ function baseCommand(name: string, payload: unknown) {
     userId: 'user_1',
     deviceId: 'dev_1',
     correlationId: 'corr_1',
-    idempotencyKey: 'idem_1',
+    idempotencyKey: `${name}:${JSON.stringify(payload)}`,
   };
 }
 
@@ -116,6 +116,20 @@ describe('asynchronous coding jobs', () => {
   let harness: Harness;
   beforeEach(() => {
     harness = createHarness();
+  });
+
+  it('returns the original job when the same durable request is retried', async () => {
+    const command = baseCommand('task.start', {
+      projectId: harness.projectId,
+      instruction: 'do it once',
+    });
+
+    const first = (await harness.adapter.execute(command)) as { jobId: string };
+    const retry = (await harness.adapter.execute(command)) as { jobId: string };
+
+    expect(retry.jobId).toBe(first.jobId);
+    expect(harness.store.listJobs()).toHaveLength(1);
+    expect(harness.store.listDomainSessions()).toHaveLength(1);
   });
 
   it('returns a job id immediately without waiting for the work', async () => {

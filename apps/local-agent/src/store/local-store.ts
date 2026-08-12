@@ -138,6 +138,13 @@ export class LocalStore {
     return row ? toLocalJob(row) : null;
   }
 
+  findJobByIdempotencyKey(idempotencyKey: string): LocalJob | null {
+    const row = this.database
+      .prepare('SELECT * FROM jobs WHERE idempotency_key = ? LIMIT 1')
+      .get(idempotencyKey);
+    return row ? toLocalJob(row) : null;
+  }
+
   listJobs(options: { activeOnly?: boolean } = {}): LocalJob[] {
     const rows = options.activeOnly
       ? this.database

@@ -62,6 +62,8 @@ type RunningProcess = {
 
 export type ClaudeCodeProviderOptions = {
   executablePath: string;
+  /** Explicit user opt-in. Browser access remains off unless the installed CLI also supports it. */
+  chromeEnabled?: boolean;
   stateDirectory: string;
   jobTimeoutMs: number;
   maxOutputBytes: number;
@@ -96,7 +98,12 @@ export class ClaudeCodeProvider implements CodingProvider {
         providerId: this.providerId,
         available: false,
         status: 'missing',
-        details: { executablePath: this.options.executablePath },
+        details: {
+          executablePath: this.options.executablePath,
+          supportsChrome: false,
+          chromeAccessRequested: this.options.chromeEnabled === true,
+          chromeAccessEnabled: false,
+        },
       };
       return this.detectionCache;
     }
@@ -114,6 +121,10 @@ export class ClaudeCodeProvider implements CodingProvider {
         supportsResume: this.supportedFlags.has('--resume'),
         supportsPreassignedSessionId: this.supportedFlags.has('--session-id'),
         supportsPermissionMode: this.supportedFlags.has('--permission-mode'),
+        supportsChrome: this.supportedFlags.has('--chrome'),
+        chromeAccessRequested: this.options.chromeEnabled === true,
+        chromeAccessEnabled:
+          this.options.chromeEnabled === true && this.supportedFlags.has('--chrome'),
         sandbox: 'working directory only, no operating-system sandbox',
       },
     };
@@ -310,6 +321,10 @@ export class ClaudeCodeProvider implements CodingProvider {
     // Deliberately no --dangerously-skip-permissions and no --add-dir: the working directory is the
     // only place this run may touch.
     if (flags.has('--permission-mode')) args.push('--permission-mode', 'acceptEdits');
+
+    // Browser access is a separate authority boundary. A configuration opt-in alone is not enough:
+    // only pass the flag when this exact installed CLI advertised support for it during detection.
+    if (this.options.chromeEnabled === true && flags.has('--chrome')) args.push('--chrome');
 
     return args;
   }

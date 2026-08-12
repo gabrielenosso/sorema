@@ -2,7 +2,7 @@ import { toStructuredError } from '@sorema/domain-model';
 import type { DeviceIdentityStore } from '../identity/device-identity-store.js';
 
 export type CloudCommand = { name: string; payload: Record<string, unknown> };
-export type CloudCommandHandler = (command: CloudCommand) => Promise<unknown>;
+export type CloudCommandHandler = (command: CloudCommand, requestId: string) => Promise<unknown>;
 
 export type CloudSocket = {
   send(data: string): void;
@@ -43,6 +43,7 @@ export class CloudTunnelClient {
   private readonly maxDelayMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly schedule: (handler: () => void, ms: number) => unknown;
+  private readonly inFlight = new Map<string, Promise<unknown>>();
 
   constructor(private readonly options: CloudTunnelOptions) {
     this.initialDelayMs = options.reconnectInitialDelayMs ?? 1_000;
@@ -68,7 +69,7 @@ export class CloudTunnelClient {
   }
 
   /** Tells the cloud a job moved on, so it can notify whoever is listening — or store it if nobody is. */
-  reportJob(update: { jobId: string; status: string; summary?: string }): void {
+  reportJob(update: { jobId: string; deviceId: string; status: string; summary?: string }): void {
     this.send({ type: 'job_update', payload: update });
   }
 
@@ -134,10 +135,15 @@ export class CloudTunnelClient {
     if (!requestId || !command?.name) return;
 
     try {
-      const result = await this.options.handleCommand({
-        name: command.name,
-        payload: command.payload ?? {},
-      });
+      const existing = this.inFlight.get(requestId);
+      const work =
+        existing ??
+        this.options.handleCommand(
+          { name: command.name, payload: command.payload ?? {} },
+          requestId,
+        );
+      if (!existing) this.inFlight.set(requestId, work);
+      const result = await work;
       this.send({ type: 'command_result', payload: { requestId, result } });
     } catch (error) {
       // The cloud is waiting on this row; a command that throws must still answer, or the tool call
@@ -151,6 +157,8 @@ export class CloudTunnelClient {
         type: 'command_result',
         payload: { requestId, error: toStructuredError(error) },
       });
+    } finally {
+      this.inFlight.delete(requestId);
     }
   }
 

@@ -103,6 +103,26 @@ describe('the daemon connecting to the cloud tunnel', () => {
     });
   });
 
+  it('runs simultaneous deliveries of one stable request only once', async () => {
+    context.client.start();
+    let finish!: (value: unknown) => void;
+    context.handleCommand.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const frame = {
+      data: JSON.stringify({
+        type: 'command_request',
+        payload: { requestId: 'stable-1', command: { name: 'task.start', payload: {} } },
+      }),
+    };
+
+    context.opened[0]?.socket.onmessage?.(frame);
+    context.opened[0]?.socket.onmessage?.(frame);
+    await vi.waitFor(() => expect(context.handleCommand).toHaveBeenCalledTimes(1));
+    finish({ accepted: true });
+    await vi.waitFor(() => expect(context.sent).toHaveLength(2));
+
+    expect(context.sent[0]).toEqual(context.sent[1]);
+  });
+
   it('answers even when the command throws, so nothing is left waiting', async () => {
     context.client.start();
     context.handleCommand.mockRejectedValue(new Error('the workspace is gone'));
@@ -182,16 +202,23 @@ describe('the daemon connecting to the cloud tunnel', () => {
   it('reports a finished job without being asked', () => {
     context.client.start();
 
-    context.client.reportJob({ jobId: 'j1', status: 'succeeded', summary: 'done' });
+    context.client.reportJob({
+      jobId: 'j1',
+      deviceId: 'device-1',
+      status: 'succeeded',
+      summary: 'done',
+    });
 
     expect(context.sent[0]).toEqual({
       type: 'job_update',
-      payload: { jobId: 'j1', status: 'succeeded', summary: 'done' },
+      payload: { jobId: 'j1', deviceId: 'device-1', status: 'succeeded', summary: 'done' },
     });
   });
 
   it('drops a job report on the floor rather than throwing when the socket is down', () => {
-    expect(() => context.client.reportJob({ jobId: 'j1', status: 'failed' })).not.toThrow();
+    expect(() =>
+      context.client.reportJob({ jobId: 'j1', deviceId: 'device-1', status: 'failed' }),
+    ).not.toThrow();
     expect(context.sent).toHaveLength(0);
   });
 

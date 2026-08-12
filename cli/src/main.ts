@@ -2,6 +2,7 @@ import { hostname, homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { looksLikePairingCode } from './commands.js';
+import { readClaudeChromeAccess, writeClaudeChromeAccess } from './browser-access.js';
 import {
   describeUnsupportedNodeVersion,
   nodeVersionHasBuiltInSqlite,
@@ -38,6 +39,9 @@ const USAGE = `sorema — run work on this machine, by voice, from anywhere.
   sorema start               Stay connected. Leave it running.
   sorema projects            Say which folder your projects come from.
   sorema projects <FOLDER>   Change it, for when your code moves.
+  sorema chrome enable       Let Claude Code use your signed-in Chrome profile.
+  sorema chrome disable      Remove that browser access (the default).
+  sorema chrome status       Show whether browser access is allowed.
   sorema service install     Start on its own whenever you log in.
   sorema service uninstall   Stop doing that.
   sorema status              Say whether this machine is paired, and as whom.
@@ -74,6 +78,12 @@ function applyDefaults(): void {
   // been chosen, because the agent then reports itself misconfigured — which is true, and visible —
   // rather than quietly offering up a folder nobody named.
   process.env.LOCAL_AGENT_WORKSPACE_ROOTS ??= readWorkspaceRoots(stateDirectory()).join(',');
+  // Forced from durable, owner-only consent rather than inherited from the shell. Browser access
+  // reaches signed-in sites, so an ambient or machine-wide variable must not silently grant it to
+  // the service. `sorema chrome enable` is the one explicit path that changes this value.
+  process.env.CLAUDE_CODE_CHROME_ENABLED = readClaudeChromeAccess(stateDirectory())
+    ? 'true'
+    : 'false';
   // Off by default: somebody who installed this wants it to do the work, not to mime it.
   process.env.SOREMA_DEMO_MODE ??= 'false';
   // Forced, not defaulted. The logger picks a pretty-printing transport whenever this is not
@@ -304,6 +314,50 @@ async function main(): Promise<number> {
         ? 'No projects folder set, so this machine offers none. Run: sorema projects <FOLDER>\n'
         : `Projects come from ${roots.join(', ')}.\n`,
     );
+    process.stdout.write(
+      readClaudeChromeAccess(stateDirectory())
+        ? 'Claude Code Chrome access is enabled.\n'
+        : 'Claude Code Chrome access is disabled. Run: sorema chrome enable\n',
+    );
+    return 0;
+  }
+
+  if (command === 'chrome') {
+    if (argument === 'status' || argument === undefined) {
+      process.stdout.write(
+        readClaudeChromeAccess(stateDirectory())
+          ? 'Claude Code Chrome access is enabled.\n'
+          : 'Claude Code Chrome access is disabled.\n',
+      );
+      return 0;
+    }
+    if (argument !== 'enable' && argument !== 'disable') {
+      process.stderr.write(
+        'Usage: sorema chrome enable | sorema chrome disable | sorema chrome status\n',
+      );
+      return 1;
+    }
+
+    const enabled = argument === 'enable';
+    writeClaudeChromeAccess(stateDirectory(), enabled);
+    process.env.CLAUDE_CODE_CHROME_ENABLED = enabled ? 'true' : 'false';
+    process.stdout.write(
+      enabled
+        ? 'Claude Code Chrome access enabled. Browser tasks may reach sites signed in on this machine.\n'
+        : 'Claude Code Chrome access disabled.\n',
+    );
+
+    const { planService, isServiceInstalled, restartService } = await import('./service.js');
+    const plan = planService(
+      process.execPath,
+      [process.argv[1], 'start'].filter((value): value is string => Boolean(value)),
+    );
+    if (isServiceInstalled(plan)) {
+      restartService(plan);
+      process.stdout.write('Restarted Sorema, so the change is active now.\n');
+    } else {
+      process.stdout.write('The setting will apply the next time Sorema starts.\n');
+    }
     return 0;
   }
 

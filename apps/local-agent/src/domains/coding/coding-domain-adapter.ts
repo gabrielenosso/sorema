@@ -192,6 +192,18 @@ export class CodingDomainAdapter implements DomainAdapter {
     if (command.command.name !== 'task.start') {
       throw SoremaError.of('COMMAND_REJECTED', 'Unexpected command');
     }
+    const duplicate = this.options.store.findJobByIdempotencyKey(command.idempotencyKey);
+    if (duplicate?.domainSessionId) {
+      return {
+        accepted: true as const,
+        jobId: duplicate.id,
+        domainSessionId: duplicate.domainSessionId,
+        providerId: duplicate.providerId,
+        domain: duplicate.domain,
+        status: 'queued' as const,
+        spokenSummary: 'This task was already accepted.',
+      };
+    }
     const { payload } = command.command;
     const projectPath = this.options.projectRegistry.resolveProjectPath(payload.projectId);
     const provider = await this.selectProvider(payload.providerPreference);

@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { writeWorkspaceRoots } from '../src/workspace-roots.js';
+import { writeClaudeChromeAccess } from '../src/browser-access.js';
 
 const BUNDLE = join(import.meta.dirname, '..', 'dist', 'sorema.mjs');
 
@@ -92,6 +93,17 @@ describe.skipIf(!existsSync(BUNDLE))('the built command runs outside this test r
     expect(`${result.stdout}${result.stderr}`).not.toMatch(
       /Dynamic require|Cannot find|SyntaxError/,
     );
+  });
+
+  it('reads durable Chrome consent in a fresh process and ignores ambient overrides', () => {
+    const state = mkdtempSync(join(tmpdir(), 'sorema-chrome-setting-'));
+    writeClaudeChromeAccess(state, true);
+    const enabled = run(['status'], 20_000, { CLAUDE_CODE_CHROME_ENABLED: 'false' }, state);
+    expect(enabled.stdout).toContain('Claude Code Chrome access is enabled.');
+
+    writeClaudeChromeAccess(state, false);
+    const disabled = run(['status'], 20_000, { CLAUDE_CODE_CHROME_ENABLED: 'true' }, state);
+    expect(disabled.stdout).toContain('Claude Code Chrome access is disabled.');
   });
 
   it('reaches the agent without a module it cannot resolve', () => {
