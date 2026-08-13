@@ -77,24 +77,44 @@ export function buildCodingProviders(config: LocalAgentConfig, logger: Logger): 
  * one would be a write to a table whose capacity every tenant shares, to move a number nobody says
  * out loud. What a job is doing right now is a question for the machine, which is awake if it is
  * running the job.
+ *
+ * A job that ends badly travels with the reason it ended badly. Both endings used to arrive as
+ * `failed` with an empty summary, so the cloud stored nothing, `get_job_status` answered "The task
+ * is failed." with nothing after it, and the notification said the same — while the adapter had
+ * published the whole structured error one function call earlier. Cancelling was worse than empty:
+ * `cancel_job` answered "cancelled" and asking about the same job a second later answered "failed",
+ * so the two halves of one conversation contradicted each other.
+ *
+ * The narrowing below is on `event.type` rather than a cast, so renaming a field on either event
+ * stops this compiling instead of quietly sending an empty string again.
  */
 export function jobUpdateForCloud(
   event: SoremaEvent,
 ): { jobId: string; status: string; summary: string } | null {
-  const payload = event.payload as { jobId?: string; spokenSummary?: string; summary?: string };
-  if (!payload.jobId) return null;
-
-  if (event.type === 'job.queued') return { jobId: payload.jobId, status: 'queued', summary: '' };
-  if (event.type === 'job.started') return { jobId: payload.jobId, status: 'running', summary: '' };
+  if (event.type === 'job.queued') {
+    return { jobId: event.payload.jobId, status: 'queued', summary: '' };
+  }
+  if (event.type === 'job.started') {
+    return { jobId: event.payload.jobId, status: 'running', summary: '' };
+  }
   if (event.type === 'job.completed') {
     return {
-      jobId: payload.jobId,
+      jobId: event.payload.jobId,
       status: 'succeeded',
-      summary: payload.spokenSummary ?? payload.summary ?? '',
+      summary: event.payload.spokenSummary || event.payload.summary,
     };
   }
-  if (event.type === 'job.failed' || event.type === 'job.cancelled') {
-    return { jobId: payload.jobId, status: 'failed', summary: '' };
+  if (event.type === 'job.failed') {
+    // `userMessage` first because it is the half of a structured error written to be said out loud;
+    // `message` is the technical half and is only reached when a producer left the other one empty.
+    return {
+      jobId: event.payload.jobId,
+      status: 'failed',
+      summary: event.payload.error.userMessage || event.payload.error.message,
+    };
+  }
+  if (event.type === 'job.cancelled') {
+    return { jobId: event.payload.jobId, status: 'cancelled', summary: event.payload.reason };
   }
   return null;
 }
