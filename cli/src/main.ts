@@ -17,6 +17,7 @@ import {
 
 declare const __SOREMA_API_URL__: string;
 declare const __SOREMA_TUNNEL_URL__: string;
+declare const __SOREMA_VERSION__: string;
 
 /**
  * Where the deployed service lives, substituted at build time rather than written here.
@@ -30,7 +31,7 @@ declare const __SOREMA_TUNNEL_URL__: string;
 const DEFAULT_API_URL = typeof __SOREMA_API_URL__ === 'string' ? __SOREMA_API_URL__ : '';
 const DEFAULT_TUNNEL_URL = typeof __SOREMA_TUNNEL_URL__ === 'string' ? __SOREMA_TUNNEL_URL__ : '';
 
-const VERSION = '0.9.8';
+const VERSION = typeof __SOREMA_VERSION__ === 'string' ? __SOREMA_VERSION__ : '0.0.0-dev';
 
 const USAGE = `sorema — run work on this machine, by voice, from anywhere.
 
@@ -73,6 +74,9 @@ function applyDefaults(): void {
   process.env.LOCAL_AGENT_STATE_DIR ??= stateDirectory();
   process.env.LOCAL_AGENT_DATABASE_URL ??= `file:${join(stateDirectory(), 'sorema.sqlite')}`;
   process.env.LOCAL_AGENT_DEVICE_NAME ??= `${hostname()} (${platform()})`;
+  // The cloud shows which installed command last held the machine's authenticated socket. Forced,
+  // not defaulted: an ambient variable must not make an old executable claim to be a newer one.
+  process.env.SOREMA_AGENT_VERSION = VERSION;
   // Read from disk rather than asked for here: `start` runs under a service with no terminal, so
   // the answer given once at pairing has to reach it some other way. Left empty when nothing has
   // been chosen, because the agent then reports itself misconfigured — which is true, and visible —
@@ -222,6 +226,7 @@ async function main(): Promise<number> {
       findRottingPath,
       installGlobally,
       restartService,
+      uninstallService,
     } = await import('./service.js');
     const { planSetup } = await import('./setup.js');
 
@@ -280,6 +285,11 @@ async function main(): Promise<number> {
       if (step.action === 'install-service') {
         installService(plan);
         process.stdout.write(`Running under ${plan.describe}. Nothing else to start.\n`);
+      }
+      if (step.action === 'replace-service') {
+        uninstallService(plan);
+        installService(plan);
+        process.stdout.write('Updated Sorema and replaced its background service.\n');
       }
       if (step.action === 'restart-service') {
         restartService(plan);

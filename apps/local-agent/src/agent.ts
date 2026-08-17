@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { platform } from 'node:os';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { SoremaError, type Capability, type SoremaEvent } from '@sorema/domain-model';
 import { InMemoryEventBus, type EventBus } from '@sorema/event-bus';
@@ -210,6 +211,8 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     ? new CloudTunnelClient({
         tunnelUrl: config.cloudTunnelUrl,
         identity,
+        agentVersion: process.env.SOREMA_AGENT_VERSION ?? LOCAL_AGENT_VERSION,
+        platform: platform(),
         createSocket: openCloudSocket,
         log: (message, detail) => logger.info(detail ?? {}, message),
         reconnectInitialDelayMs: config.reconnectInitialDelayMs,

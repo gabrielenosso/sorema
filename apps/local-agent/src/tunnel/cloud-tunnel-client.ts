@@ -16,6 +16,8 @@ export type CloudSocket = {
 export type CloudTunnelOptions = {
   tunnelUrl: string;
   identity: DeviceIdentityStore;
+  agentVersion?: string;
+  platform?: string;
   handleCommand: CloudCommandHandler;
   log: (message: string, detail?: Record<string, unknown>) => void;
   createSocket: (url: string, headers: Record<string, string>) => CloudSocket;
@@ -84,11 +86,15 @@ export class CloudTunnelClient {
     // Signed at the moment of connecting, never before: the server refuses a timestamp older than a
     // minute, and spends each signature once.
     const timestamp = new Date().toISOString();
-    const headers = {
+    const headers: Record<string, string> = {
       'x-device-id': deviceId,
       'x-device-timestamp': timestamp,
       'x-device-signature': identity.sign(`${deviceId}:${timestamp}`),
     };
+    // Optional for source-built/older callers. Informational only: the cloud never uses either
+    // field for authorization; they let the owner see what needs updating.
+    if (this.options.agentVersion) headers['x-agent-version'] = this.options.agentVersion;
+    if (this.options.platform) headers['x-agent-platform'] = this.options.platform;
 
     const socket = createSocket(tunnelUrl, headers);
     this.socket = socket;

@@ -42,8 +42,9 @@ npx sorema@latest A1B2C3D4
 That is the whole thing: it pairs, installs itself so it survives a reboot, and connects. Run it
 again any time — it works out what is already done and does only the rest.
 
-`@latest` matters. The command installs itself and never checks for a newer version afterwards, so
-without it a machine keeps running whatever copy it already had.
+`@latest` matters. Run the same command again whenever the web app offers an update: it installs the
+new durable copy, replaces the background service and reconnects without changing the machine's
+identity, projects or saved sessions.
 
 The code comes from the web app, under "Pair your computer".
 

@@ -21,6 +21,7 @@ export type SetupStep =
   | { action: 'choose-projects' }
   | { action: 'install-globally' }
   | { action: 'install-service' }
+  | { action: 'replace-service' }
   | { action: 'restart-service' }
   | { action: 'run-in-foreground' }
   | { action: 'already-running' }
@@ -63,6 +64,13 @@ export function planSetup(state: MachineState): SetupStep[] {
   if (!state.workspaceRootsConfigured) steps.push({ action: 'choose-projects' });
 
   if (!state.serviceInstalled) steps.push({ action: 'install-service' });
+  // Running through `npx sorema@latest` means the durable global copy has just been replaced. An
+  // existing service may still point at an older launcher definition and its already-running Node
+  // process has the old bundle in memory. Merely installing the package leaves both untouched —
+  // exactly how a fixed Windows watchdog was present on disk while the machine stayed offline under
+  // its old logon-only task. Replace the service as part of the same command so "run it again" is a
+  // real update operation, not only a package download.
+  else if (state.rottingPath) steps.push({ action: 'replace-service' });
   // A service that was already running when the pairing happened is still answering as the machine
   // this one used to be: the new key is on disk, and the old socket is still open, so it has no
   // reason to reconnect and read it. The account shows the deleted machine online and the new one

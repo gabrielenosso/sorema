@@ -25,6 +25,8 @@ function harness(options: { deviceId?: string | null } = {}) {
   const client = new CloudTunnelClient({
     tunnelUrl: 'wss://tunnel.example/live',
     identity: fakeIdentity(options.deviceId === undefined ? 'device-1' : options.deviceId),
+    agentVersion: '0.9.9',
+    platform: 'win32',
     handleCommand,
     log: () => {},
     setTimeoutImplementation: (handler) => {
@@ -61,6 +63,8 @@ describe('the daemon connecting to the cloud tunnel', () => {
     const headers = context.opened[0]?.headers ?? {};
     expect(headers['x-device-id']).toBe('device-1');
     expect(headers['x-device-signature']).toBe(`signed(device-1:${headers['x-device-timestamp']})`);
+    expect(headers['x-agent-version']).toBe('0.9.9');
+    expect(headers['x-agent-platform']).toBe('win32');
   });
 
   it('signs a fresh timestamp for every attempt, since the server spends each one', () => {
@@ -228,6 +232,8 @@ describe('the daemon connecting to the cloud tunnel', () => {
     const backoff = new CloudTunnelClient({
       tunnelUrl: 'wss://tunnel.example/live',
       identity: fakeIdentity('device-1'),
+      agentVersion: '0.9.9',
+      platform: 'linux',
       handleCommand: vi.fn(),
       log: () => {},
       reconnectInitialDelayMs: 1000,

@@ -64,6 +64,23 @@ describe('working out what a machine still needs', () => {
     ]);
   });
 
+  it('replaces an existing service after npx installs the latest durable copy', () => {
+    const steps = planSetup({
+      paired: true,
+      code: null,
+      serviceInstalled: true,
+      rottingPath: 'the npx cache',
+      workspaceRootsConfigured: true,
+    });
+
+    expect(steps.map((step) => step.action)).toEqual([
+      'explain',
+      'install-globally',
+      'replace-service',
+      'already-running',
+    ]);
+  });
+
   it('still pairs before falling back to the foreground', () => {
     const steps = planSetup({
       paired: false,
@@ -168,7 +185,11 @@ describe('pairing a machine that is already running', () => {
       workspaceRootsConfigured: true,
     });
 
-    expect(steps.map((step) => step.action)).toEqual(['pair', 'restart-service', 'already-running']);
+    expect(steps.map((step) => step.action)).toEqual([
+      'pair',
+      'restart-service',
+      'already-running',
+    ]);
   });
 
   it('does not restart when nothing was re-paired', () => {

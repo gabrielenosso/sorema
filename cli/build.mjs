@@ -1,4 +1,6 @@
 import { build } from 'esbuild';
+import { readFile } from 'node:fs/promises';
+import { URL } from 'node:url';
 
 /**
  * Substitutes the deployment's addresses into the bundle.
@@ -8,7 +10,8 @@ import { build } from 'esbuild';
  * one that fails. Absent values are left absent on purpose: the command then says it does not know
  * which deployment to talk to, which is the truth.
  */
-const define = {};
+const manifest = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'));
+const define = { __SOREMA_VERSION__: JSON.stringify(String(manifest.version)) };
 if (process.env.SOREMA_API_URL) {
   define.__SOREMA_API_URL__ = JSON.stringify(process.env.SOREMA_API_URL);
 }
@@ -48,7 +51,7 @@ await build({
   define,
 });
 
-const named = Object.keys(define).length;
+const named = Object.keys(define).filter((name) => name !== '__SOREMA_VERSION__').length;
 process.stdout.write(
   named === 2
     ? 'built, pointed at the configured deployment\n'
