@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import {
   capabilitySchema,
-  domainSessionSchema,
   jobSchema,
   jobStatusSchema,
   projectSummarySchema,
@@ -32,7 +31,37 @@ export const createProjectCommandSchema = z.object({
 
 export const listDomainSessionsCommandSchema = z.object({
   name: z.literal('domain_sessions.list'),
-  payload: z.object({ domain: z.string().optional(), projectPath: z.string().optional() }),
+  payload: z.object({
+    domain: z.string().optional(),
+    projectPath: z.string().optional(),
+    includeArchived: z.boolean().optional(),
+  }),
+});
+
+export const renameDomainSessionCommandSchema = z.object({
+  name: z.literal('domain_sessions.rename'),
+  payload: z.object({
+    domainSessionId: z.string().min(1),
+    title: z.string().trim().min(1).max(120),
+  }),
+});
+
+export const archiveDomainSessionCommandSchema = z.object({
+  name: z.literal('domain_sessions.archive'),
+  payload: z.object({ domainSessionId: z.string().min(1), archived: z.boolean() }),
+});
+
+export const startNewDomainSessionCommandSchema = z.object({
+  name: z.literal('domain_sessions.start_new'),
+  payload: z.object({
+    domainSessionId: z.string().min(1),
+    instruction: z.string().trim().min(1).max(20_000),
+  }),
+});
+
+export const stopDomainSessionCommandSchema = z.object({
+  name: z.literal('domain_sessions.stop'),
+  payload: z.object({ domainSessionId: z.string().min(1), confirmed: z.literal(true) }),
 });
 
 export const startTaskCommandSchema = z.object({
@@ -76,6 +105,10 @@ export const deviceCommandSchema = z.discriminatedUnion('name', [
   listProjectsCommandSchema,
   createProjectCommandSchema,
   listDomainSessionsCommandSchema,
+  renameDomainSessionCommandSchema,
+  archiveDomainSessionCommandSchema,
+  startNewDomainSessionCommandSchema,
+  stopDomainSessionCommandSchema,
   startTaskCommandSchema,
   continueTaskCommandSchema,
   getJobStatusCommandSchema,
@@ -98,11 +131,46 @@ export const startedJobResultSchema = z.object({
 
 export type StartedJobResult = z.infer<typeof startedJobResultSchema>;
 
+export const managedDomainSessionSchema = z.object({
+  id: z.string(),
+  domain: z.string(),
+  providerId: z.string(),
+  title: z.string(),
+  status: z.string(),
+  archivedAt: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const listedDomainSessionSchema = managedDomainSessionSchema.extend({
+  projectId: z.string(),
+  projectName: z.string(),
+  activeJobId: z.string().optional(),
+});
+
+export const managedProjectSummarySchema = projectSummarySchema.pick({
+  id: true,
+  name: true,
+  isGitRepository: true,
+  lastModifiedAt: true,
+});
+
 export const deviceCommandResultSchemasByName = {
   'capabilities.list': z.object({ capabilities: z.array(capabilitySchema) }),
-  'projects.list': z.object({ projects: z.array(projectSummarySchema) }),
-  'projects.create': z.object({ project: projectSummarySchema, alreadyExisted: z.boolean() }),
-  'domain_sessions.list': z.object({ sessions: z.array(domainSessionSchema) }),
+  'projects.list': z.object({ projects: z.array(managedProjectSummarySchema) }),
+  'projects.create': z.object({
+    project: managedProjectSummarySchema,
+    alreadyExisted: z.boolean(),
+  }),
+  'domain_sessions.list': z.object({ sessions: z.array(listedDomainSessionSchema) }),
+  'domain_sessions.rename': z.object({ session: managedDomainSessionSchema }),
+  'domain_sessions.archive': z.object({ session: managedDomainSessionSchema }),
+  'domain_sessions.start_new': startedJobResultSchema,
+  'domain_sessions.stop': z.object({
+    jobId: z.string(),
+    cancelled: z.boolean(),
+    status: jobStatusSchema,
+  }),
   'task.start': startedJobResultSchema,
   'task.continue': startedJobResultSchema,
   'job.status': z.object({ job: jobSchema }),

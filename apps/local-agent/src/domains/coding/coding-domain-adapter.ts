@@ -12,9 +12,11 @@ import {
   type ProjectSummary,
   type StructuredError,
 } from '@sorema/domain-model';
+import { basename } from 'node:path';
 import type { Logger } from '@sorema/observability';
 import type { LocalJob, LocalStore } from '../../store/local-store.js';
 import type { ProjectRegistry } from '../../projects/project-registry.js';
+import { createProjectIdentifier } from '../../projects/project-registry.js';
 import type { DomainAdapter, DomainCommand } from '../domain-adapter.js';
 import type { CodingProvider, CodingSession, CodingTaskUpdate } from './provider-types.js';
 import { FAKE_PROVIDER_ID } from './providers/fake-coding-provider.js';
@@ -26,6 +28,10 @@ const HANDLED_COMMAND_NAMES = new Set([
   'job.cancel',
   'jobs.list',
   'domain_sessions.list',
+  'domain_sessions.rename',
+  'domain_sessions.archive',
+  'domain_sessions.start_new',
+  'domain_sessions.stop',
   'projects.list',
   'projects.create',
 ]);
@@ -46,6 +52,7 @@ export class CodingDomainAdapter implements DomainAdapter {
 
   private readonly options: CodingDomainAdapterOptions;
   private readonly providersById = new Map<string, CodingProvider>();
+  private readonly startingProjectPaths = new Set<string>();
   private stopped = false;
 
   constructor(options: CodingDomainAdapterOptions) {
@@ -88,17 +95,59 @@ export class CodingDomainAdapter implements DomainAdapter {
     switch (command.command.name) {
       case 'projects.list':
         return {
-          projects: this.options.projectRegistry.listProjects(command.command.payload.search),
+          projects: this.options.projectRegistry
+            .listProjects(command.command.payload.search)
+            .map(managedProjectFields),
         };
-      case 'projects.create':
-        return this.createProject(command.command.payload.name);
+      case 'projects.create': {
+        const created = this.createProject(command.command.payload.name);
+        return { ...created, project: managedProjectFields(created.project) };
+      }
       case 'domain_sessions.list':
         return {
-          sessions: this.options.store.listDomainSessions({
-            domain: command.command.payload.domain,
-            projectPath: command.command.payload.projectPath,
-          }),
+          sessions: this.options.store
+            .listDomainSessions({
+              domain: command.command.payload.domain,
+              projectPath: command.command.payload.projectPath,
+              includeArchived: command.command.payload.includeArchived,
+              userId: this.options.userId,
+              deviceId: this.options.deviceId,
+            })
+            .map((session) => ({
+              ...managedSessionFields(session),
+              projectId: session.projectPath
+                ? createProjectIdentifier(session.projectPath)
+                : `unlinked:${session.id}`,
+              projectName: session.projectPath ? basename(session.projectPath) : 'Other work',
+              activeJobId: this.options.store.findActiveJobForSession(session.id)?.id,
+            })),
         };
+      case 'domain_sessions.rename':
+        return this.renameDomainSession(
+          command.command.payload.domainSessionId,
+          command.command.payload.title,
+        );
+      case 'domain_sessions.archive':
+        return this.archiveDomainSession(
+          command.command.payload.domainSessionId,
+          command.command.payload.archived,
+        );
+      case 'domain_sessions.start_new':
+        return this.startNewDomainSession(command);
+      case 'domain_sessions.stop': {
+        this.requireCodingSession(command.command.payload.domainSessionId);
+        const previous = this.options.store.findSessionActionResult(command.idempotencyKey);
+        if (previous) return previous;
+        const active = this.options.store.findActiveJobForSession(
+          command.command.payload.domainSessionId,
+        );
+        if (!active) {
+          throw SoremaError.of('JOB_NOT_FOUND', 'This session has no active job');
+        }
+        const result = await this.cancelJob(active.id, command.command.payload.confirmed);
+        this.options.store.saveSessionActionResult(command.idempotencyKey, result);
+        return result;
+      }
       case 'jobs.list':
         return {
           jobs: this.options.store
@@ -135,6 +184,97 @@ export class CodingDomainAdapter implements DomainAdapter {
     const project = this.options.projectRegistry.createProject(name);
     const alreadyExisted = this.options.projectRegistry.listProjects().length === before;
     return { project, alreadyExisted };
+  }
+
+  private requireCodingSession(domainSessionId: string): DomainSession {
+    const session = this.options.store.findDomainSession(domainSessionId);
+    if (
+      !session ||
+      session.domain !== this.domain ||
+      session.userId !== this.options.userId ||
+      session.deviceId !== this.options.deviceId
+    ) {
+      throw SoremaError.of(
+        'CODING_SESSION_NOT_FOUND',
+        `No coding session with id ${domainSessionId}`,
+      );
+    }
+    return session;
+  }
+
+  private renameDomainSession(
+    domainSessionId: string,
+    title: string,
+  ): { session: ReturnType<typeof managedSessionFields> } {
+    const stored = this.requireCodingSession(domainSessionId);
+    const session = { ...stored, title: title.trim(), updatedAt: nowIsoTimestamp() };
+    this.options.store.saveDomainSession(session);
+    return { session: managedSessionFields(session) };
+  }
+
+  private archiveDomainSession(
+    domainSessionId: string,
+    archived: boolean,
+  ): { session: ReturnType<typeof managedSessionFields> } {
+    const stored = this.requireCodingSession(domainSessionId);
+    if (archived && this.options.store.findActiveJobForSession(domainSessionId)) {
+      throw SoremaError.of(
+        'COMMAND_REJECTED',
+        'Stop the active job before archiving this session',
+        { userMessage: 'Stop the active work before archiving this session.' },
+      );
+    }
+    const session = this.options.store.setDomainSessionArchived(
+      stored.id,
+      archived ? nowIsoTimestamp() : null,
+    );
+    if (!session) throw SoremaError.of('CODING_SESSION_NOT_FOUND', 'The session no longer exists');
+    return { session: managedSessionFields(session) };
+  }
+
+  private async startNewDomainSession(command: DomainCommand): Promise<unknown> {
+    if (command.command.name !== 'domain_sessions.start_new') {
+      throw SoremaError.of('COMMAND_REJECTED', 'Unexpected command');
+    }
+    const duplicate = this.startedJobForDuplicate(command.idempotencyKey);
+    if (duplicate) return duplicate;
+    const source = this.requireCodingSession(command.command.payload.domainSessionId);
+    if (!source.projectPath) {
+      throw SoremaError.of('PROJECT_NOT_FOUND', 'This session is not linked to a project');
+    }
+    const instruction = command.command.payload.instruction;
+    this.options.projectRegistry.assertPathIsAllowed(source.projectPath);
+    return this.withProjectStartLock(source.projectPath, async () => {
+      const provider = await this.selectProvider(source.providerId);
+      const session = await this.createDomainSession(source.projectPath!, provider, instruction);
+      return this.dispatchTask({
+        session,
+        provider,
+        instruction,
+        command,
+        resumed: false,
+      });
+    });
+  }
+
+  private async withProjectStartLock<T>(projectPath: string, action: () => Promise<T>): Promise<T> {
+    const active = this.options.store.findActiveJobForProject(
+      projectPath,
+      this.options.userId,
+      this.options.deviceId,
+    );
+    if (active || this.startingProjectPaths.has(projectPath)) {
+      throw SoremaError.of('COMMAND_REJECTED', 'Another agent is already using this working tree', {
+        userMessage:
+          'That repository already has active work. Continue it after the current step finishes, or wait before starting separate work.',
+      });
+    }
+    this.startingProjectPaths.add(projectPath);
+    try {
+      return await action();
+    } finally {
+      this.startingProjectPaths.delete(projectPath);
+    }
   }
 
   private async selectProvider(preference?: string): Promise<CodingProvider> {
@@ -192,38 +332,33 @@ export class CodingDomainAdapter implements DomainAdapter {
     if (command.command.name !== 'task.start') {
       throw SoremaError.of('COMMAND_REJECTED', 'Unexpected command');
     }
-    const duplicate = this.options.store.findJobByIdempotencyKey(command.idempotencyKey);
-    if (duplicate?.domainSessionId) {
-      return {
-        accepted: true as const,
-        jobId: duplicate.id,
-        domainSessionId: duplicate.domainSessionId,
-        providerId: duplicate.providerId,
-        domain: duplicate.domain,
-        status: 'queued' as const,
-        spokenSummary: 'This task was already accepted.',
-      };
-    }
+    const duplicate = this.startedJobForDuplicate(command.idempotencyKey);
+    if (duplicate) return duplicate;
     const { payload } = command.command;
     const projectPath = this.options.projectRegistry.resolveProjectPath(payload.projectId);
-    const provider = await this.selectProvider(payload.providerPreference);
+    return this.withProjectStartLock(projectPath, async () => {
+      const provider = await this.selectProvider(payload.providerPreference);
 
-    const existing =
-      payload.continueExistingSession === false
-        ? null
-        : this.options.store.findReusableSessionForProject(projectPath, provider.providerId);
+      const existing =
+        payload.continueExistingSession === false
+          ? null
+          : this.options.store.findReusableSessionForProject(projectPath, provider.providerId, {
+              userId: this.options.userId,
+              deviceId: this.options.deviceId,
+            });
 
-    const session = existing
-      ? await this.resumeDomainSession(existing, provider)
-      : await this.createDomainSession(projectPath, provider, payload.instruction);
+      const session = existing
+        ? await this.resumeDomainSession(existing, provider)
+        : await this.createDomainSession(projectPath, provider, payload.instruction);
 
-    return this.dispatchTask({
-      session,
-      provider,
-      instruction: payload.instruction,
-      command,
-      conversationId: payload.conversationId,
-      resumed: Boolean(existing),
+      return this.dispatchTask({
+        session,
+        provider,
+        instruction: payload.instruction,
+        command,
+        conversationId: payload.conversationId,
+        resumed: Boolean(existing),
+      });
     });
   }
 
@@ -231,30 +366,46 @@ export class CodingDomainAdapter implements DomainAdapter {
     if (command.command.name !== 'task.continue') {
       throw SoremaError.of('COMMAND_REJECTED', 'Unexpected command');
     }
+    const duplicate = this.startedJobForDuplicate(command.idempotencyKey);
+    if (duplicate) return duplicate;
     const { payload } = command.command;
-    const stored = this.options.store.findDomainSession(payload.domainSessionId);
-    if (!stored || stored.domain !== 'coding') {
-      throw SoremaError.of(
-        'CODING_SESSION_NOT_FOUND',
-        `No coding session with id ${payload.domainSessionId}`,
-      );
+    const stored = this.requireCodingSession(payload.domainSessionId);
+    if (stored.archivedAt) {
+      throw SoremaError.of('COMMAND_REJECTED', 'Restore this session before continuing it');
     }
-    const provider = this.providersById.get(stored.providerId);
-    if (!provider) {
-      throw SoremaError.of(
-        'CODING_PROVIDER_NOT_INSTALLED',
-        `Provider ${stored.providerId} is no longer registered on this device`,
-      );
-    }
-    const session = await this.resumeDomainSession(stored, provider);
-    return this.dispatchTask({
-      session,
-      provider,
-      instruction: payload.instruction,
-      command,
-      conversationId: payload.conversationId,
-      resumed: true,
+    if (!stored.projectPath) throw SoremaError.of('PROJECT_NOT_FOUND', 'Session has no project');
+    return this.withProjectStartLock(stored.projectPath, async () => {
+      const provider = this.providersById.get(stored.providerId);
+      if (!provider) {
+        throw SoremaError.of(
+          'CODING_PROVIDER_NOT_INSTALLED',
+          `Provider ${stored.providerId} is no longer registered on this device`,
+        );
+      }
+      const session = await this.resumeDomainSession(stored, provider);
+      return this.dispatchTask({
+        session,
+        provider,
+        instruction: payload.instruction,
+        command,
+        conversationId: payload.conversationId,
+        resumed: true,
+      });
     });
+  }
+
+  private startedJobForDuplicate(idempotencyKey: string): unknown | null {
+    const duplicate = this.options.store.findJobByIdempotencyKey(idempotencyKey);
+    if (!duplicate?.domainSessionId) return null;
+    return {
+      accepted: true as const,
+      jobId: duplicate.id,
+      domainSessionId: duplicate.domainSessionId,
+      providerId: duplicate.providerId,
+      domain: duplicate.domain,
+      status: duplicate.status,
+      spokenSummary: 'This task was already accepted.',
+    };
   }
 
   private async createDomainSession(
@@ -501,6 +652,7 @@ export class CodingDomainAdapter implements DomainAdapter {
     await provider?.cancelTask(jobId);
     const completedAt = nowIsoTimestamp();
     this.options.store.saveJob({ ...job, status: 'cancelled', completedAt });
+    if (job.domainSessionId) this.markSessionIdle(job.domainSessionId);
     this.publish('job.cancelled', jobId, {
       jobId,
       domain: this.domain,
@@ -570,6 +722,28 @@ export class CodingDomainAdapter implements DomainAdapter {
 function stripLocalJobFields(job: LocalJob) {
   const { instruction: _instruction, providerId: _providerId, ...rest } = job;
   return rest;
+}
+
+function managedSessionFields(session: DomainSession) {
+  return {
+    id: session.id,
+    domain: session.domain,
+    providerId: session.providerId,
+    title: session.title,
+    status: session.status,
+    archivedAt: session.archivedAt,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
+}
+
+function managedProjectFields(project: ProjectSummary) {
+  return {
+    id: project.id,
+    name: project.name,
+    isGitRepository: project.isGitRepository,
+    lastModifiedAt: project.lastModifiedAt,
+  };
 }
 
 function toStructured(error: unknown): StructuredError {

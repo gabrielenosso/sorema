@@ -86,11 +86,13 @@ describe('project discovery', () => {
 
   it('lists only projects inside the authorised roots', async () => {
     const result = (await harness.adapter.execute(baseCommand('projects.list', {}))) as {
-      projects: { id: string; path: string }[];
+      projects: { id: string; name: string }[];
     };
     expect(result.projects.length).toBeGreaterThan(0);
     for (const project of result.projects) {
-      expect(project.path.startsWith(harness.root)).toBe(true);
+      expect(project.id).toBeTruthy();
+      expect(project.name).toBeTruthy();
+      expect(project).not.toHaveProperty('path');
     }
   });
 
@@ -219,6 +221,14 @@ describe('asynchronous coding jobs', () => {
         baseCommand('task.continue', { domainSessionId: 'dsn_nope', instruction: 'go on' }),
       ),
     ).rejects.toMatchObject({ structured: { code: 'CODING_SESSION_NOT_FOUND' } });
+    await expect(
+      harness.adapter.execute(
+        baseCommand('domain_sessions.stop', {
+          domainSessionId: 'session-previous-owner',
+          confirmed: true,
+        }),
+      ),
+    ).rejects.toMatchObject({ structured: { code: 'CODING_SESSION_NOT_FOUND' } });
   });
 
   it('rejects a provider that is not usable on this device', async () => {
@@ -244,6 +254,181 @@ describe('asynchronous coding jobs', () => {
     )) as { providerId: string; spokenSummary: string };
     expect(result.providerId).toBe('fake');
     expect(result.spokenSummary).toContain('simulated');
+  });
+});
+
+describe('session management', () => {
+  let harness: Harness;
+  beforeEach(() => {
+    harness = createHarness();
+  });
+
+  async function completedSession(): Promise<string> {
+    const started = (await harness.adapter.execute(
+      baseCommand('task.start', { projectId: harness.projectId, instruction: 'initial task' }),
+    )) as { domainSessionId: string };
+    await waitForEvent(harness.events, 'job.completed');
+    return started.domainSessionId;
+  }
+
+  it('lists safe project identity and active-job state', async () => {
+    const started = (await harness.adapter.execute(
+      baseCommand('task.start', { projectId: harness.projectId, instruction: 'long task' }),
+    )) as { domainSessionId: string; jobId: string };
+    const listed = (await harness.adapter.execute(baseCommand('domain_sessions.list', {}))) as {
+      sessions: Array<Record<string, unknown>>;
+    };
+
+    expect(listed.sessions[0]).toMatchObject({
+      id: started.domainSessionId,
+      projectId: harness.projectId,
+      projectName: 'ai-sorema',
+      activeJobId: started.jobId,
+    });
+  });
+
+  it('never lists or operates on sessions left by a previously paired account', async () => {
+    const timestamp = new Date().toISOString();
+    harness.store.saveDomainSession({
+      id: 'session-previous-owner',
+      userId: 'user_previous',
+      deviceId: 'device_previous',
+      domain: 'coding',
+      providerId: 'fake',
+      providerSessionId: 'native-secret',
+      projectPath: harness.projectPath,
+      title: 'Private previous work',
+      status: 'idle',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      metadata: { private: true },
+    });
+
+    const listed = (await harness.adapter.execute(
+      baseCommand('domain_sessions.list', { includeArchived: true }),
+    )) as { sessions: Array<{ id: string }> };
+    expect(listed.sessions).toEqual([]);
+    await expect(
+      harness.adapter.execute(
+        baseCommand('domain_sessions.rename', {
+          domainSessionId: 'session-previous-owner',
+          title: 'stolen',
+        }),
+      ),
+    ).rejects.toMatchObject({ structured: { code: 'CODING_SESSION_NOT_FOUND' } });
+  });
+
+  it('sends only dashboard-safe fields over the session-list protocol', async () => {
+    await completedSession();
+    const listed = (await harness.adapter.execute(baseCommand('domain_sessions.list', {}))) as {
+      sessions: Array<Record<string, unknown>>;
+    };
+    expect(listed.sessions[0]).not.toHaveProperty('projectPath');
+    expect(listed.sessions[0]).not.toHaveProperty('providerSessionId');
+    expect(listed.sessions[0]).not.toHaveProperty('metadata');
+    expect(listed.sessions[0]).not.toHaveProperty('userId');
+    expect(listed.sessions[0]).not.toHaveProperty('deviceId');
+  });
+
+  it('renames only Sorema metadata and archives and restores a finished session', async () => {
+    const domainSessionId = await completedSession();
+    const nativeId = harness.store.findDomainSession(domainSessionId)?.providerSessionId;
+
+    const renamed = (await harness.adapter.execute(
+      baseCommand('domain_sessions.rename', { domainSessionId, title: 'Release preparation' }),
+    )) as { session: { title: string } };
+    expect(renamed.session).toMatchObject({ title: 'Release preparation' });
+    expect(renamed.session).not.toHaveProperty('providerSessionId');
+    expect(harness.store.findDomainSession(domainSessionId)?.providerSessionId).toBe(nativeId);
+
+    await harness.adapter.execute(
+      baseCommand('domain_sessions.archive', { domainSessionId, archived: true }),
+    );
+    const visible = (await harness.adapter.execute(baseCommand('domain_sessions.list', {}))) as {
+      sessions: unknown[];
+    };
+    const includingArchived = (await harness.adapter.execute(
+      baseCommand('domain_sessions.list', { includeArchived: true }),
+    )) as { sessions: Array<{ archivedAt?: string }> };
+    expect(visible.sessions).toEqual([]);
+    expect(includingArchived.sessions[0]?.archivedAt).toBeTruthy();
+
+    await harness.adapter.execute(
+      baseCommand('domain_sessions.archive', { domainSessionId, archived: false }),
+    );
+    expect(harness.store.findDomainSession(domainSessionId)?.archivedAt).toBeUndefined();
+  });
+
+  it('starts a genuinely new native session in the same project', async () => {
+    const domainSessionId = await completedSession();
+    const sourceNativeId = harness.store.findDomainSession(domainSessionId)?.providerSessionId;
+    const next = (await harness.adapter.execute(
+      baseCommand('domain_sessions.start_new', {
+        domainSessionId,
+        instruction: 'work independently on the docs',
+      }),
+    )) as { domainSessionId: string };
+
+    expect(next.domainSessionId).not.toBe(domainSessionId);
+    expect(harness.store.findDomainSession(next.domainSessionId)?.projectPath).toBe(
+      harness.projectPath,
+    );
+    expect(harness.store.findDomainSession(next.domainSessionId)?.providerSessionId).not.toBe(
+      sourceNativeId,
+    );
+  });
+
+  it('refuses two separate sessions in the same working tree at the same time', async () => {
+    const started = (await harness.adapter.execute(
+      baseCommand('task.start', { projectId: harness.projectId, instruction: 'first task' }),
+    )) as { domainSessionId: string };
+
+    await expect(
+      harness.adapter.execute(
+        baseCommand('domain_sessions.start_new', {
+          domainSessionId: started.domainSessionId,
+          instruction: 'second task at the same time',
+        }),
+      ),
+    ).rejects.toMatchObject({ structured: { code: 'COMMAND_REJECTED' } });
+    expect(harness.store.listDomainSessions()).toHaveLength(1);
+  });
+
+  it('serializes simultaneous starts before either provider can create a session', async () => {
+    const [first, second] = await Promise.allSettled([
+      harness.adapter.execute(
+        baseCommand('task.start', { projectId: harness.projectId, instruction: 'first task' }),
+      ),
+      harness.adapter.execute(
+        baseCommand('task.start', {
+          projectId: harness.projectId,
+          instruction: 'second independent task',
+          continueExistingSession: false,
+        }),
+      ),
+    ]);
+
+    expect([first.status, second.status].sort()).toEqual(['fulfilled', 'rejected']);
+    expect(harness.store.listDomainSessions()).toHaveLength(1);
+    expect(harness.store.listJobs()).toHaveLength(1);
+  });
+
+  it('stops the active job belonging to the selected session', async () => {
+    const started = (await harness.adapter.execute(
+      baseCommand('task.start', { projectId: harness.projectId, instruction: 'long task' }),
+    )) as { domainSessionId: string; jobId: string };
+    const stopCommand = baseCommand('domain_sessions.stop', {
+      domainSessionId: started.domainSessionId,
+      confirmed: true,
+    });
+    const stopped = (await harness.adapter.execute(stopCommand)) as {
+      jobId: string;
+      cancelled: boolean;
+    };
+
+    expect(stopped).toMatchObject({ jobId: started.jobId, cancelled: true });
+    expect(harness.store.findDomainSession(started.domainSessionId)?.status).toBe('idle');
+    await expect(harness.adapter.execute(stopCommand)).resolves.toEqual(stopped);
   });
 });
 

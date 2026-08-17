@@ -23,6 +23,7 @@ export const domainSessionSchema = z.object({
   projectPath: z.string().optional(),
   title: z.string(),
   status: domainSessionStatusSchema,
+  archivedAt: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   metadata: z.record(z.unknown()),

@@ -42,15 +42,16 @@ function createStore(): LocalStore {
 }
 
 function jobFixture(overrides: Partial<LocalJob> = {}): LocalJob {
+  const id = overrides.id ?? 'job_1';
   return {
-    id: 'job_1',
+    id,
     userId: 'user_1',
     deviceId: 'dev_1',
     domain: 'coding',
     type: 'coding.task',
     status: 'queued',
     createdAt: nowIsoTimestamp(),
-    idempotencyKey: 'idem_1',
+    idempotencyKey: overrides.idempotencyKey ?? `idem_${id}`,
     correlationId: 'corr_1',
     instruction: 'do the thing',
     providerId: 'fake',
@@ -59,6 +60,20 @@ function jobFixture(overrides: Partial<LocalJob> = {}): LocalJob {
 }
 
 describe('local job storage', () => {
+  it('removes expired session-action retry results when the store opens', () => {
+    const database = createLocalAgentDatabase(':memory:');
+    database
+      .prepare(
+        'INSERT INTO session_action_results (idempotency_key, result_json, created_at) VALUES (?, ?, ?)',
+      )
+      .run('expired', '{}', '2000-01-01T00:00:00.000Z');
+
+    new LocalStore(database);
+
+    const row = database.prepare('SELECT COUNT(*) AS count FROM session_action_results').get();
+    expect(Number(row?.['count'])).toBe(0);
+  });
+
   it('saves and reads a job, preserving fractional progress', () => {
     const store = createStore();
     store.saveJob(jobFixture({ status: 'running', progress: 0.45 }));
@@ -73,6 +88,15 @@ describe('local job storage', () => {
     store.saveJob(jobFixture({ status: 'completed', summary: 'finished' }));
     expect(store.listJobs()).toHaveLength(1);
     expect(store.findJob('job_1')?.summary).toBe('finished');
+  });
+
+  it('enforces one durable job per idempotency key', () => {
+    const store = createStore();
+    store.saveJob(jobFixture({ id: 'job_first', idempotencyKey: 'same-request' }));
+    expect(() =>
+      store.saveJob(jobFixture({ id: 'job_second', idempotencyKey: 'same-request' })),
+    ).toThrow();
+    expect(store.listJobs()).toHaveLength(1);
   });
 
   it('filters active jobs', () => {
@@ -122,6 +146,49 @@ describe('domain sessions', () => {
       metadata: {},
     });
     expect(store.findReusableSessionForProject('C:/projects/demo')).toBeNull();
+  });
+
+  it('archives without changing the provider session and excludes archived sessions by default', () => {
+    const store = createStore();
+    const timestamp = nowIsoTimestamp();
+    store.saveDomainSession({
+      id: 'dsn_archived',
+      userId: 'user_1',
+      deviceId: 'dev_1',
+      domain: 'coding',
+      providerId: 'codex',
+      providerSessionId: 'native-session',
+      projectPath: 'C:/projects/demo',
+      title: 'demo',
+      status: 'idle',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      metadata: {},
+    });
+
+    const archived = store.setDomainSessionArchived('dsn_archived', timestamp);
+    expect(archived).toMatchObject({ archivedAt: timestamp, providerSessionId: 'native-session' });
+    expect(store.listDomainSessions()).toEqual([]);
+    expect(store.listDomainSessions({ includeArchived: true })).toHaveLength(1);
+    expect(store.findReusableSessionForProject('C:/projects/demo')).toBeNull();
+
+    expect(store.setDomainSessionArchived('dsn_archived', null)?.archivedAt).toBeUndefined();
+    expect(store.listDomainSessions()).toHaveLength(1);
+  });
+
+  it('finds the newest active job for a session', () => {
+    const store = createStore();
+    store.saveJob(jobFixture({ id: 'job_old', domainSessionId: 'dsn_1', createdAt: '2026-01-01' }));
+    store.saveJob(
+      jobFixture({
+        id: 'job_new',
+        domainSessionId: 'dsn_1',
+        status: 'running',
+        createdAt: '2026-01-02',
+      }),
+    );
+    store.saveJob(jobFixture({ id: 'job_done', domainSessionId: 'dsn_1', status: 'completed' }));
+    expect(store.findActiveJobForSession('dsn_1')?.id).toBe('job_new');
   });
 });
 
@@ -196,7 +263,12 @@ describe('a database written by the better-sqlite3 build', () => {
     // the unbounded growth in place for exactly the people who ran the old command longest.
     const { database } = openCopyOfLegacyDatabase();
 
-    expect(tableNames(database)).toEqual(['domain_sessions', 'jobs']);
+    expect(tableNames(database)).toEqual([
+      'archived_domain_sessions',
+      'domain_sessions',
+      'jobs',
+      'session_action_results',
+    ]);
   });
 });
 
@@ -226,7 +298,12 @@ describe('the tables no code reads any more', () => {
       expect(tableNames(database)).not.toContain('outbox');
       expect(tableNames(database)).not.toContain('processed_commands');
       // And the tables that carry real history are untouched by the same migration run.
-      expect(tableNames(database)).toEqual(['domain_sessions', 'jobs']);
+      expect(tableNames(database)).toEqual([
+        'archived_domain_sessions',
+        'domain_sessions',
+        'jobs',
+        'session_action_results',
+      ]);
     } finally {
       database.close();
     }

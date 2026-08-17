@@ -19,6 +19,7 @@ export function createLocalAgentDatabase(databaseUrl: string): LocalAgentDatabas
   // for the reason it was set in the first place — the agent writes while its own HTTP handlers
   // read, and the default rollback journal blocks one on the other.
   connection.exec('PRAGMA journal_mode = WAL');
+  connection.exec('PRAGMA foreign_keys = ON');
   for (const statement of LOCAL_AGENT_MIGRATION_STATEMENTS) connection.exec(statement);
 
   return connection;
