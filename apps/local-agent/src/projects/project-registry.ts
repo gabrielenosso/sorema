@@ -41,7 +41,14 @@ export class ProjectRegistry {
     const all = [...projects.values()].sort((left, right) => left.name.localeCompare(right.name));
     if (!search || search.trim().length === 0) return all;
     const needle = search.trim().toLowerCase();
-    return all.filter((project) => project.name.toLowerCase().includes(needle));
+    const spokenNeedle = normalizeSpokenProjectName(search);
+    return all.filter((project) => {
+      const name = project.name.toLowerCase();
+      return (
+        name.includes(needle) ||
+        (spokenNeedle.length > 0 && normalizeSpokenProjectName(name).includes(spokenNeedle))
+      );
+    });
   }
 
   private readChildDirectories(root: string): string[] {
@@ -116,6 +123,15 @@ export class ProjectRegistry {
     }
     return created;
   }
+}
+
+/** Treat punctuation the recognizer may insert into a spoken name as presentation, not identity. */
+function normalizeSpokenProjectName(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
 }
 
 const RESERVED_WINDOWS_NAMES = new Set([

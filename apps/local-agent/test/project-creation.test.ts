@@ -86,6 +86,25 @@ describe('creating a project', () => {
   });
 });
 
+describe('finding a project from a spoken name', () => {
+  it.each(['X-AI', 'x ai', 'X_AI', 'x.a.i'])('matches %s to the xai folder', (spokenName) => {
+    mkdirSync(join(workspaceRoot, 'xai'));
+    const registry = new ProjectRegistry([workspaceRoot]);
+
+    expect(registry.listProjects(spokenName).map((project) => project.name)).toEqual(['xai']);
+  });
+
+  it('still supports ordinary substring searches after spoken punctuation is normalized', () => {
+    mkdirSync(join(workspaceRoot, 'xai-scorecard-handover'));
+    mkdirSync(join(workspaceRoot, 'sorema'));
+    const registry = new ProjectRegistry([workspaceRoot]);
+
+    expect(registry.listProjects('scorecard').map((project) => project.name)).toEqual([
+      'xai-scorecard-handover',
+    ]);
+  });
+});
+
 describe('folder name sanitising', () => {
   it('turns a spoken name into a safe folder name', () => {
     expect(sanitizeProjectFolderName('AI Sorema')).toBe('ai-sorema');
