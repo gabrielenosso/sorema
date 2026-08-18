@@ -17,7 +17,10 @@ import { ClaudeCodeProvider } from './domains/coding/providers/claude-code-provi
 import type { CodingProvider } from './domains/coding/provider-types.js';
 import type { DomainAdapter } from './domains/domain-adapter.js';
 import { localAgentVersion, detectCapabilities } from './capabilities/capability-detector.js';
-import { CloudTunnelClient } from './tunnel/cloud-tunnel-client.js';
+import {
+  CloudTunnelClient,
+  type CloudJobUpdate as TunnelCloudJobUpdate,
+} from './tunnel/cloud-tunnel-client.js';
 import { openCloudSocket } from './tunnel/cloud-socket.js';
 import { CommandRateLimiter } from './process/command-rate-limiter.js';
 
@@ -89,18 +92,44 @@ export function buildCodingProviders(config: LocalAgentConfig, logger: Logger): 
  * The narrowing below is on `event.type` rather than a cast, so renaming a field on either event
  * stops this compiling instead of quietly sending an empty string again.
  */
-export function jobUpdateForCloud(
-  event: SoremaEvent,
-): { jobId: string; status: string; summary: string } | null {
+export type CloudJobUpdate = Omit<TunnelCloudJobUpdate, 'deviceId'> & {
+  eventType:
+    | 'job.queued'
+    | 'job.started'
+    | 'job.completed'
+    | 'job.failed'
+    | 'job.cancelled'
+    | 'approval.required';
+};
+
+export function jobUpdateForCloud(event: SoremaEvent): CloudJobUpdate | null {
+  const envelope = { eventId: event.eventId, occurredAt: event.occurredAt };
   if (event.type === 'job.queued') {
-    return { jobId: event.payload.jobId, status: 'queued', summary: '' };
+    return {
+      ...envelope,
+      eventType: event.type,
+      jobId: event.payload.jobId,
+      domainSessionId: event.payload.domainSessionId,
+      status: 'queued',
+      summary: '',
+    };
   }
   if (event.type === 'job.started') {
-    return { jobId: event.payload.jobId, status: 'running', summary: '' };
+    return {
+      ...envelope,
+      eventType: event.type,
+      jobId: event.payload.jobId,
+      domainSessionId: event.payload.domainSessionId,
+      status: 'running',
+      summary: '',
+    };
   }
   if (event.type === 'job.completed') {
     return {
+      ...envelope,
+      eventType: event.type,
       jobId: event.payload.jobId,
+      domainSessionId: event.payload.domainSessionId,
       status: 'succeeded',
       summary: event.payload.spokenSummary || event.payload.summary,
     };
@@ -109,13 +138,33 @@ export function jobUpdateForCloud(
     // `userMessage` first because it is the half of a structured error written to be said out loud;
     // `message` is the technical half and is only reached when a producer left the other one empty.
     return {
+      ...envelope,
+      eventType: event.type,
       jobId: event.payload.jobId,
+      domainSessionId: event.payload.domainSessionId,
       status: 'failed',
       summary: event.payload.error.userMessage || event.payload.error.message,
     };
   }
   if (event.type === 'job.cancelled') {
-    return { jobId: event.payload.jobId, status: 'cancelled', summary: event.payload.reason };
+    return {
+      ...envelope,
+      eventType: event.type,
+      jobId: event.payload.jobId,
+      domainSessionId: event.payload.domainSessionId,
+      status: 'cancelled',
+      summary: event.payload.reason,
+    };
+  }
+  if (event.type === 'approval.required') {
+    return {
+      ...envelope,
+      eventType: event.type,
+      jobId: event.payload.jobId,
+      domainSessionId: event.payload.domainSessionId,
+      status: 'waiting_for_approval',
+      summary: event.payload.spokenSummary,
+    };
   }
   return null;
 }
@@ -140,7 +189,11 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
   const reportJobToCloud = (event: SoremaEvent): void => {
     if (!cloudTunnel) return;
     const update = jobUpdateForCloud(event);
-    if (update) cloudTunnel.reportJob({ ...update, deviceId: identity.deviceId ?? 'unpaired' });
+    if (update) {
+      const durableUpdate = { ...update, deviceId: identity.deviceId ?? 'unpaired' };
+      store.saveCloudEvent(update.eventId, durableUpdate);
+      cloudTunnel.reportJob(durableUpdate);
+    }
   };
 
   const publishEvent = (event: SoremaEvent): void => {
@@ -217,6 +270,9 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
         log: (message, detail) => logger.info(detail ?? {}, message),
         reconnectInitialDelayMs: config.reconnectInitialDelayMs,
         reconnectMaxDelayMs: config.reconnectMaxDelayMs,
+        loadPendingJobUpdates: () =>
+          store.listCloudEvents().filter(isCloudJobUpdate),
+        acknowledgeJobUpdate: (eventId) => store.deleteCloudEvent(eventId),
         handleCommand: (command, requestId) =>
           runCommand(command as DeviceCommand, {
             userId: identity.userId ?? 'unpaired',
@@ -286,4 +342,15 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
       database.close();
     },
   };
+}
+
+function isCloudJobUpdate(payload: Record<string, unknown>): payload is TunnelCloudJobUpdate {
+  return (
+    typeof payload.eventId === 'string' &&
+    typeof payload.eventType === 'string' &&
+    typeof payload.occurredAt === 'string' &&
+    typeof payload.jobId === 'string' &&
+    typeof payload.deviceId === 'string' &&
+    typeof payload.status === 'string'
+  );
 }

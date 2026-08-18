@@ -166,6 +166,28 @@ export class LocalStore {
     });
   }
 
+  saveCloudEvent(eventId: string, payload: Record<string, unknown>): void {
+    this.database
+      .prepare(
+        `INSERT INTO cloud_event_outbox (event_id, payload_json, created_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(event_id) DO UPDATE SET payload_json = excluded.payload_json`,
+      )
+      .run(eventId, JSON.stringify(payload), new Date().toISOString());
+  }
+
+  listCloudEvents(): Record<string, unknown>[] {
+    return this.database
+      .prepare('SELECT payload_json FROM cloud_event_outbox ORDER BY created_at, event_id')
+      .all()
+      .map((row) => parseJson<Record<string, unknown> | null>(readOptionalText(row, 'payload_json'), null))
+      .filter((payload): payload is Record<string, unknown> => payload !== null);
+  }
+
+  deleteCloudEvent(eventId: string): void {
+    this.database.prepare('DELETE FROM cloud_event_outbox WHERE event_id = ?').run(eventId);
+  }
+
   findJob(jobId: string): LocalJob | null {
     const row = this.database.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
     return row ? toLocalJob(row) : null;

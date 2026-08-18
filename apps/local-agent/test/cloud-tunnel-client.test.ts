@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SoremaError } from '@sorema/domain-model';
-import { CloudTunnelClient, type CloudSocket } from '../src/tunnel/cloud-tunnel-client.js';
+import {
+  CloudTunnelClient,
+  type CloudJobUpdate,
+  type CloudSocket,
+} from '../src/tunnel/cloud-tunnel-client.js';
 import type { DeviceIdentityStore } from '../src/identity/device-identity-store.js';
 
 type OpenedSocket = { url: string; headers: Record<string, string>; socket: CloudSocket };
@@ -16,7 +20,13 @@ function fakeIdentity(deviceId: string | null): DeviceIdentityStore {
   } as unknown as DeviceIdentityStore;
 }
 
-function harness(options: { deviceId?: string | null } = {}) {
+function harness(
+  options: {
+    deviceId?: string | null;
+    pendingJobUpdates?: CloudJobUpdate[];
+    acknowledgeJobUpdate?: (eventId: string) => void;
+  } = {},
+) {
   const opened: OpenedSocket[] = [];
   const sent: Record<string, unknown>[] = [];
   const scheduled: (() => void)[] = [];
@@ -45,9 +55,13 @@ function harness(options: { deviceId?: string | null } = {}) {
       opened.push({ url, headers, socket });
       return socket;
     },
+    loadPendingJobUpdates: () => options.pendingJobUpdates ?? [],
+    acknowledgeJobUpdate: options.acknowledgeJobUpdate,
   });
 
-  return { client, opened, sent, scheduled, handleCommand };
+  const openLatest = () => opened.at(-1)?.socket.onopen?.();
+
+  return { client, opened, sent, scheduled, handleCommand, openLatest };
 }
 
 describe('the daemon connecting to the cloud tunnel', () => {
@@ -91,6 +105,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
   it('runs a command and answers with the request id it was given', async () => {
     context.client.start();
+    context.openLatest();
     context.handleCommand.mockResolvedValue({ projects: ['sorema'] });
 
     context.opened[0]?.socket.onmessage?.({
@@ -109,6 +124,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
   it('runs simultaneous deliveries of one stable request only once', async () => {
     context.client.start();
+    context.openLatest();
     let finish!: (value: unknown) => void;
     context.handleCommand.mockReturnValue(new Promise((resolve) => (finish = resolve)));
     const frame = {
@@ -129,6 +145,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
   it('answers even when the command throws, so nothing is left waiting', async () => {
     context.client.start();
+    context.openLatest();
     context.handleCommand.mockRejectedValue(new Error('the workspace is gone'));
 
     context.opened[0]?.socket.onmessage?.({
@@ -155,6 +172,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
    */
   it('sends the whole structured error, not the sentence at the top of it', async () => {
     context.client.start();
+    context.openLatest();
     context.handleCommand.mockRejectedValue(
       SoremaError.of('PROVIDER_CHOICE_REQUIRED', 'no preference has been recorded', {
         details: { availableProviders: ['codex', 'claude'] },
@@ -203,27 +221,156 @@ describe('the daemon connecting to the cloud tunnel', () => {
     expect(context.sent).toHaveLength(0);
   });
 
-  it('reports a finished job without being asked', () => {
+  it('queues a finished job until the socket is actually open', () => {
     context.client.start();
 
     context.client.reportJob({
+      eventId: 'event-1',
+      eventType: 'job.completed',
+      occurredAt: '2026-08-18T08:00:00.000Z',
       jobId: 'j1',
       deviceId: 'device-1',
+      domainSessionId: 'session-1',
       status: 'succeeded',
       summary: 'done',
     });
 
+    expect(context.sent).toHaveLength(0);
+    expect(context.client.isConnected).toBe(false);
+
+    context.openLatest();
+
+    expect(context.client.isConnected).toBe(true);
     expect(context.sent[0]).toEqual({
       type: 'job_update',
-      payload: { jobId: 'j1', deviceId: 'device-1', status: 'succeeded', summary: 'done' },
+      payload: {
+        eventId: 'event-1',
+        eventType: 'job.completed',
+        occurredAt: '2026-08-18T08:00:00.000Z',
+        jobId: 'j1',
+        deviceId: 'device-1',
+        domainSessionId: 'session-1',
+        status: 'succeeded',
+        summary: 'done',
+      },
     });
   });
 
-  it('drops a job report on the floor rather than throwing when the socket is down', () => {
+  it('keeps a job report made while offline and sends it after connecting', () => {
     expect(() =>
-      context.client.reportJob({ jobId: 'j1', deviceId: 'device-1', status: 'failed' }),
+      context.client.reportJob({
+        eventId: 'event-1',
+        eventType: 'job.failed',
+        occurredAt: '2026-08-18T08:00:00.000Z',
+        jobId: 'j1',
+        deviceId: 'device-1',
+        status: 'failed',
+      }),
     ).not.toThrow();
     expect(context.sent).toHaveLength(0);
+
+    context.client.start();
+    context.openLatest();
+
+    expect(context.sent).toHaveLength(1);
+    expect(context.sent[0]).toMatchObject({
+      type: 'job_update',
+      payload: { eventId: 'event-1', status: 'failed' },
+    });
+  });
+
+  it('replays an unacknowledged event after reconnecting', () => {
+    context.client.start();
+    context.openLatest();
+    context.client.reportJob({
+      eventId: 'event-retry',
+      eventType: 'job.completed',
+      occurredAt: '2026-08-18T08:00:00.000Z',
+      jobId: 'j1',
+      deviceId: 'device-1',
+      status: 'succeeded',
+    });
+    expect(context.sent).toHaveLength(1);
+
+    context.opened[0]?.socket.onclose?.({ code: 1006, reason: 'dropped before ack' });
+    // The already scheduled heartbeat observes the closed socket and exits; the next callback is
+    // the reconnect.
+    context.scheduled.shift()?.();
+    context.scheduled.shift()?.();
+    context.openLatest();
+
+    expect(context.sent).toHaveLength(2);
+    expect(context.sent[1]).toEqual(context.sent[0]);
+  });
+
+  it('stops replaying an event after the cloud acknowledges it', async () => {
+    context.client.start();
+    context.openLatest();
+    context.client.reportJob({
+      eventId: 'event-acked',
+      eventType: 'job.completed',
+      occurredAt: '2026-08-18T08:00:00.000Z',
+      jobId: 'j1',
+      deviceId: 'device-1',
+      status: 'succeeded',
+    });
+    context.opened[0]?.socket.onmessage?.({
+      data: JSON.stringify({ type: 'job_update_ack', payload: { eventId: 'event-acked' } }),
+    });
+    await Promise.resolve();
+
+    context.opened[0]?.socket.onclose?.({ code: 1006, reason: 'later reconnect' });
+    context.scheduled.shift()?.();
+    context.scheduled.shift()?.();
+    context.openLatest();
+
+    expect(context.sent).toHaveLength(1);
+  });
+
+  it('restores durable pending events after a complete service restart', () => {
+    const restored = harness({
+      pendingJobUpdates: [
+        {
+          eventId: 'event-from-disk',
+          eventType: 'job.failed',
+          occurredAt: '2026-08-18T08:00:00.000Z',
+          jobId: 'j1',
+          deviceId: 'device-1',
+          status: 'failed',
+        },
+      ],
+    });
+
+    restored.client.start();
+    restored.openLatest();
+
+    expect(restored.sent).toEqual([
+      expect.objectContaining({
+        type: 'job_update',
+        payload: expect.objectContaining({ eventId: 'event-from-disk' }),
+      }),
+    ]);
+  });
+
+  it('removes an acknowledged event from durable storage', async () => {
+    const acknowledgeJobUpdate = vi.fn();
+    const durable = harness({ acknowledgeJobUpdate });
+    durable.client.start();
+    durable.openLatest();
+    durable.client.reportJob({
+      eventId: 'event-delete',
+      eventType: 'job.completed',
+      occurredAt: '2026-08-18T08:00:00.000Z',
+      jobId: 'j1',
+      deviceId: 'device-1',
+      status: 'succeeded',
+    });
+
+    durable.opened[0]?.socket.onmessage?.({
+      data: JSON.stringify({ type: 'job_update_ack', payload: { eventId: 'event-delete' } }),
+    });
+
+    await vi.waitFor(() => expect(acknowledgeJobUpdate).toHaveBeenCalledWith('event-delete'));
   });
 
   it('backs off between reconnections instead of hammering the authorizer', () => {

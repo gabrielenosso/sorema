@@ -60,6 +60,34 @@ function jobFixture(overrides: Partial<LocalJob> = {}): LocalJob {
 }
 
 describe('local job storage', () => {
+  it('keeps cloud events until the cloud acknowledges them', () => {
+    const store = createStore();
+    store.saveCloudEvent('event-1', {
+      eventId: 'event-1',
+      eventType: 'job.completed',
+      jobId: 'job-1',
+    });
+
+    expect(store.listCloudEvents()).toEqual([
+      {
+        eventId: 'event-1',
+        eventType: 'job.completed',
+        jobId: 'job-1',
+      },
+    ]);
+
+    store.deleteCloudEvent('event-1');
+    expect(store.listCloudEvents()).toEqual([]);
+  });
+
+  it('updates one durable cloud event rather than duplicating its retry', () => {
+    const store = createStore();
+    store.saveCloudEvent('event-1', { eventId: 'event-1', status: 'running' });
+    store.saveCloudEvent('event-1', { eventId: 'event-1', status: 'succeeded' });
+
+    expect(store.listCloudEvents()).toEqual([{ eventId: 'event-1', status: 'succeeded' }]);
+  });
+
   it('removes expired session-action retry results when the store opens', () => {
     const database = createLocalAgentDatabase(':memory:');
     database
@@ -265,6 +293,7 @@ describe('a database written by the better-sqlite3 build', () => {
 
     expect(tableNames(database)).toEqual([
       'archived_domain_sessions',
+      'cloud_event_outbox',
       'domain_sessions',
       'jobs',
       'session_action_results',
@@ -300,6 +329,7 @@ describe('the tables no code reads any more', () => {
       // And the tables that carry real history are untouched by the same migration run.
       expect(tableNames(database)).toEqual([
         'archived_domain_sessions',
+        'cloud_event_outbox',
         'domain_sessions',
         'jobs',
         'session_action_results',

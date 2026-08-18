@@ -3,6 +3,16 @@ import type { DeviceIdentityStore } from '../identity/device-identity-store.js';
 
 export type CloudCommand = { name: string; payload: Record<string, unknown> };
 export type CloudCommandHandler = (command: CloudCommand, requestId: string) => Promise<unknown>;
+export type CloudJobUpdate = {
+  eventId: string;
+  eventType: string;
+  occurredAt: string;
+  jobId: string;
+  deviceId: string;
+  domainSessionId?: string;
+  status: string;
+  summary?: string;
+};
 
 export type CloudSocket = {
   send(data: string): void;
@@ -24,6 +34,8 @@ export type CloudTunnelOptions = {
   reconnectInitialDelayMs?: number;
   reconnectMaxDelayMs?: number;
   heartbeatIntervalMs?: number;
+  loadPendingJobUpdates?: () => readonly CloudJobUpdate[];
+  acknowledgeJobUpdate?: (eventId: string) => void;
   setTimeoutImplementation?: (handler: () => void, ms: number) => unknown;
 };
 
@@ -39,6 +51,7 @@ export type CloudTunnelOptions = {
  */
 export class CloudTunnelClient {
   private socket: CloudSocket | null = null;
+  private socketOpen = false;
   private stopping = false;
   private reconnectDelayMs: number;
   private readonly initialDelayMs: number;
@@ -46,6 +59,7 @@ export class CloudTunnelClient {
   private readonly heartbeatIntervalMs: number;
   private readonly schedule: (handler: () => void, ms: number) => unknown;
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  private readonly pendingJobUpdates = new Map<string, CloudJobUpdate>();
 
   constructor(private readonly options: CloudTunnelOptions) {
     this.initialDelayMs = options.reconnectInitialDelayMs ?? 1_000;
@@ -56,7 +70,7 @@ export class CloudTunnelClient {
   }
 
   get isConnected(): boolean {
-    return this.socket !== null;
+    return this.socketOpen;
   }
 
   start(): void {
@@ -66,13 +80,15 @@ export class CloudTunnelClient {
 
   stop(): void {
     this.stopping = true;
+    this.socketOpen = false;
     this.socket?.close();
     this.socket = null;
   }
 
   /** Tells the cloud a job moved on, so it can notify whoever is listening — or store it if nobody is. */
-  reportJob(update: { jobId: string; deviceId: string; status: string; summary?: string }): void {
-    this.send({ type: 'job_update', payload: update });
+  reportJob(update: CloudJobUpdate): void {
+    this.pendingJobUpdates.set(update.eventId, update);
+    this.flushPendingJobUpdates();
   }
 
   private connect(): void {
@@ -100,12 +116,22 @@ export class CloudTunnelClient {
     this.socket = socket;
 
     socket.onopen = () => {
+      if (this.socket !== socket) return;
+      this.socketOpen = true;
       this.reconnectDelayMs = this.initialDelayMs;
       log('tunnel open');
+      for (const update of this.options.loadPendingJobUpdates?.() ?? []) {
+        if (!this.pendingJobUpdates.has(update.eventId)) {
+          this.pendingJobUpdates.set(update.eventId, update);
+        }
+      }
+      this.flushPendingJobUpdates();
       this.scheduleHeartbeat();
     };
     socket.onmessage = (event) => void this.receive(String(event.data));
     socket.onclose = (event) => {
+      if (this.socket !== socket) return;
+      this.socketOpen = false;
       this.socket = null;
       log('tunnel closed', { code: event.code, reason: event.reason });
       this.scheduleReconnect();
@@ -124,7 +150,7 @@ export class CloudTunnelClient {
 
   private scheduleHeartbeat(): void {
     this.schedule(() => {
-      if (!this.socket) return;
+      if (!this.socketOpen) return;
       // API Gateway drops a socket that has been idle for ten minutes; this keeps it, and doubles as
       // the signal that updates when the machine was last seen.
       this.send({ type: 'heartbeat', payload: {} });
@@ -134,7 +160,16 @@ export class CloudTunnelClient {
 
   private async receive(raw: string): Promise<void> {
     const message = parseMessage(raw);
-    if (!message || message.type !== 'command_request') return;
+    if (!message) return;
+    if (message.type === 'job_update_ack') {
+      const eventId = typeof message.payload.eventId === 'string' ? message.payload.eventId : '';
+      if (eventId) {
+        this.pendingJobUpdates.delete(eventId);
+        this.options.acknowledgeJobUpdate?.(eventId);
+      }
+      return;
+    }
+    if (message.type !== 'command_request') return;
 
     const requestId = String(message.payload.requestId ?? '');
     const command = message.payload.command as CloudCommand | undefined;
@@ -169,8 +204,15 @@ export class CloudTunnelClient {
   }
 
   private send(message: { type: string; payload: Record<string, unknown> }): void {
-    if (!this.socket) return;
+    if (!this.socket || !this.socketOpen) return;
     this.socket.send(JSON.stringify(message));
+  }
+
+  private flushPendingJobUpdates(): void {
+    if (!this.socketOpen) return;
+    for (const update of this.pendingJobUpdates.values()) {
+      this.send({ type: 'job_update', payload: update });
+    }
   }
 }
 

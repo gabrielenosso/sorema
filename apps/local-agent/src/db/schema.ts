@@ -55,6 +55,11 @@ export const LOCAL_AGENT_MIGRATION_STATEMENTS: readonly string[] = [
     result_json TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS cloud_event_outbox (
+    event_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
   // `audit_log` is gone rather than capped, and this statement is here so it goes from the machines
   // that already have it as well as from the ones that do not.
   //

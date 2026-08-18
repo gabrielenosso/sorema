@@ -29,7 +29,15 @@ describe('reporting coding task activity to the notification system', () => {
         spokenSummary: 'Implemented the requested change.',
         completedAt: '2026-08-18T08:01:00.000Z',
       },
-      { jobId: 'job-1', status: 'succeeded', summary: 'Implemented the requested change.' },
+      {
+        eventId: 'event-job.completed',
+        eventType: 'job.completed',
+        occurredAt: '2026-08-18T08:00:00.000Z',
+        jobId: 'job-1',
+        domainSessionId: 'session-1',
+        status: 'succeeded',
+        summary: 'Implemented the requested change.',
+      },
     ],
     [
       'job.failed',
@@ -43,7 +51,11 @@ describe('reporting coding task activity to the notification system', () => {
         completedAt: '2026-08-18T08:01:00.000Z',
       },
       {
+        eventId: 'event-job.failed',
+        eventType: 'job.failed',
+        occurredAt: '2026-08-18T08:00:00.000Z',
         jobId: 'job-1',
+        domainSessionId: 'session-1',
         status: 'failed',
         summary: 'Claude stopped before completing the work.',
       },
@@ -54,7 +66,15 @@ describe('reporting coding task activity to the notification system', () => {
         reason: 'Stopped at the user request.',
         completedAt: '2026-08-18T08:01:00.000Z',
       },
-      { jobId: 'job-1', status: 'cancelled', summary: 'Stopped at the user request.' },
+      {
+        eventId: 'event-job.cancelled',
+        eventType: 'job.cancelled',
+        occurredAt: '2026-08-18T08:00:00.000Z',
+        jobId: 'job-1',
+        domainSessionId: 'session-1',
+        status: 'cancelled',
+        summary: 'Stopped at the user request.',
+      },
     ],
   ] as const)('turns %s into one terminal cloud result', (type, payload, expected) => {
     expect(jobUpdateForCloud(event(type, payload))).toEqual(expected);
@@ -65,12 +85,48 @@ describe('reporting coding task activity to the notification system', () => {
       jobUpdateForCloud(
         event('job.queued', { type: 'coding.task', idempotencyKey: 'idempotency-1' }),
       ),
-    ).toEqual({ jobId: 'job-1', status: 'queued', summary: '' });
+    ).toEqual({
+      eventId: 'event-job.queued',
+      eventType: 'job.queued',
+      occurredAt: '2026-08-18T08:00:00.000Z',
+      jobId: 'job-1',
+      domainSessionId: 'session-1',
+      status: 'queued',
+      summary: '',
+    });
     expect(
       jobUpdateForCloud(
         event('job.started', { startedAt: '2026-08-18T08:00:01.000Z' }),
       ),
-    ).toEqual({ jobId: 'job-1', status: 'running', summary: '' });
+    ).toEqual({
+      eventId: 'event-job.started',
+      eventType: 'job.started',
+      occurredAt: '2026-08-18T08:00:00.000Z',
+      jobId: 'job-1',
+      domainSessionId: 'session-1',
+      status: 'running',
+      summary: '',
+    });
+  });
+
+  it('reports a coding-agent question as an actionable cloud notification', () => {
+    expect(
+      jobUpdateForCloud(
+        event('approval.required', {
+          action: 'Run the database migration',
+          reason: 'It changes production data.',
+          spokenSummary: 'The coding agent needs approval to run the database migration.',
+        }),
+      ),
+    ).toEqual({
+      eventId: 'event-approval.required',
+      eventType: 'approval.required',
+      occurredAt: '2026-08-18T08:00:00.000Z',
+      jobId: 'job-1',
+      domainSessionId: 'session-1',
+      status: 'waiting_for_approval',
+      summary: 'The coding agent needs approval to run the database migration.',
+    });
   });
 
   it('does not turn high-frequency progress into conversation interruptions', () => {
