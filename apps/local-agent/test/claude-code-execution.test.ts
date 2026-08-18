@@ -10,12 +10,15 @@ import type { CodingTaskUpdate } from '../src/domains/coding/provider-types.js';
 const STUB_CLAUDE_PATH = fileURLToPath(new URL('./fixtures/stub-claude.mjs', import.meta.url));
 const silentLogger = createLogger('test', 'fatal', false);
 
-function createProvider(options: { chromeEnabled?: boolean; supportsChrome?: boolean } = {}) {
+function createProvider(
+  options: { chromeEnabled?: boolean; supportsChrome?: boolean; loggedIn?: boolean } = {},
+) {
   return new ClaudeCodeProvider({
     executablePath: process.execPath,
     executableArguments: [
       STUB_CLAUDE_PATH,
       ...(options.supportsChrome === false ? ['--stub-no-chrome'] : []),
+      ...(options.loggedIn === false ? ['--stub-logged-out'] : []),
     ],
     chromeEnabled: options.chromeEnabled,
     stateDirectory: mkdtempSync(join(tmpdir(), 'ct-claude-run-')),
@@ -116,6 +119,13 @@ describe('claude code provider against a stub that speaks the real cli protocol'
       chromeAccessRequested: false,
       chromeAccessEnabled: false,
     });
+  });
+
+  it('reports misconfigured instead of ready when Claude is not logged in', async () => {
+    const detection = await createProvider({ loggedIn: false }).detect();
+    expect(detection.available).toBe(false);
+    expect(detection.status).toBe('misconfigured');
+    expect(detection.details).toMatchObject({ authenticated: false });
   });
 
   it('assigns a session id up front instead of scraping it from the output', async () => {

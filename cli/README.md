@@ -21,6 +21,9 @@ again any time — it works out what is already done and does only the rest.
 new durable copy, replaces the background service and reconnects without changing the machine's
 identity, projects or saved sessions.
 
+Codex and Claude Code keep their own login. An installed but signed-out Claude CLI is not advertised
+as ready; sign in with `claude auth login`, then run `npx sorema@latest` again.
+
 ## What it does to your machine
 
 - It generates a keypair on first run, stored in `~/.sorema`, readable only by you. The private half

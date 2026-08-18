@@ -111,13 +111,19 @@ export class ClaudeCodeProvider implements CodingProvider {
     this.supportedFlags = parseSupportedFlags(await this.runForOutput(['--help']));
     const canRunNonInteractively =
       this.supportedFlags.has('--print') && this.supportedFlags.has('--output-format');
+    const authStatus = parseClaudeAuthStatus(
+      await this.runForOutput(['auth', 'status', '--json'], true),
+    );
+    const authenticated = authStatus?.loggedIn !== false;
 
     this.detectionCache = {
       providerId: this.providerId,
-      available: canRunNonInteractively,
-      status: canRunNonInteractively ? 'ready' : 'misconfigured',
+      available: canRunNonInteractively && authenticated,
+      status: canRunNonInteractively && authenticated ? 'ready' : 'misconfigured',
       version: version.trim(),
       details: {
+        authenticated: authStatus?.loggedIn ?? 'unknown',
+        ...(authStatus?.loggedIn === false ? { setupCommand: 'claude auth login' } : {}),
         supportsResume: this.supportedFlags.has('--resume'),
         supportsPreassignedSessionId: this.supportedFlags.has('--session-id'),
         supportsPermissionMode: this.supportedFlags.has('--permission-mode'),
@@ -340,7 +346,7 @@ export class ClaudeCodeProvider implements CodingProvider {
     return { jobId, running: this.runningProcesses.has(jobId) };
   }
 
-  private runForOutput(args: string[]): Promise<string | null> {
+  private runForOutput(args: string[], acceptNonZero = false): Promise<string | null> {
     return new Promise((resolvePromise) => {
       let output = '';
       let settled = false;
@@ -374,11 +380,21 @@ export class ClaudeCodeProvider implements CodingProvider {
         });
         child.on('close', (code) => {
           clearTimeout(timer);
-          finish(code === 0 ? output : null);
+          finish(code === 0 || (acceptNonZero && output.trim().length > 0) ? output : null);
         });
       } catch {
         finish(null);
       }
     });
+  }
+}
+
+function parseClaudeAuthStatus(value: string | null): { loggedIn: boolean } | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as { loggedIn?: unknown };
+    return typeof parsed.loggedIn === 'boolean' ? { loggedIn: parsed.loggedIn } : null;
+  } catch {
+    return null;
   }
 }

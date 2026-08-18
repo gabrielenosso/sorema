@@ -46,6 +46,15 @@ again any time — it works out what is already done and does only the rest.
 new durable copy, replaces the background service and reconnects without changing the machine's
 identity, projects or saved sessions.
 
+Codex and Claude Code use their own CLI accounts. Sorema only offers an agent after both its command
+and its login are ready. If Claude Code is installed but not signed in, run:
+
+```bash
+claude auth login
+```
+
+Then run `npx sorema@latest` again so the background service restarts and detects it.
+
 The code comes from the web app, under "Pair your computer".
 
 ### Optional: let Claude Code use Chrome

@@ -502,14 +502,23 @@ describe('restart recovery', () => {
 class StubRealProvider implements CodingProvider {
   readonly providerId: string;
 
-  constructor(providerId: string) {
+  constructor(
+    providerId: string,
+    private readonly available = true,
+  ) {
     this.providerId = providerId;
   }
 
   private readonly delegate = new FakeCodingProvider({ stepDelayMs: 10 });
 
   async detect() {
-    return { ...(await this.delegate.detect()), providerId: this.providerId };
+    return {
+      ...(await this.delegate.detect()),
+      providerId: this.providerId,
+      available: this.available,
+      status: this.available ? ('ready' as const) : ('misconfigured' as const),
+      details: this.available ? {} : { authenticated: false, setupCommand: 'claude auth login' },
+    };
   }
 
   async createSession(input: Parameters<CodingProvider['createSession']>[0]) {
@@ -536,6 +545,7 @@ class StubRealProvider implements CodingProvider {
 function createHarnessWithRealProvider(
   demoMode: boolean,
   realProviderIds: string[] = ['codex'],
+  unavailableProviderIds: string[] = [],
 ): Harness {
   const { root, projectPath } = createWorkspace();
   const store = new LocalStore(createLocalAgentDatabase(':memory:'));
@@ -546,7 +556,10 @@ function createHarnessWithRealProvider(
     projectRegistry,
     providers: [
       new FakeCodingProvider({ stepDelayMs: 10 }),
-      ...realProviderIds.map((providerId) => new StubRealProvider(providerId)),
+      ...realProviderIds.map(
+        (providerId) =>
+          new StubRealProvider(providerId, !unavailableProviderIds.includes(providerId)),
+      ),
     ],
     publishEvent: (event) => events.push(event),
     logger: silentLogger,
@@ -666,6 +679,41 @@ describe('choosing between agents is the user decision, not an array index', () 
       baseCommand('task.start', { projectId: harness.projectId, instruction: 'do it' }),
     )) as { providerId: string };
     expect(result.providerId).toBe('codex');
+  });
+
+  it('uses the one authenticated agent instead of asking about an installed but unusable one', async () => {
+    const harness = createHarnessWithRealProvider(false, ['codex', 'claude'], ['claude']);
+    const result = (await harness.adapter.execute(
+      baseCommand('task.start', { projectId: harness.projectId, instruction: 'do it' }),
+    )) as { providerId: string };
+
+    expect(result.providerId).toBe('codex');
+  });
+
+  it('tells the user how to sign in when they explicitly request unauthenticated Claude', async () => {
+    const harness = createHarnessWithRealProvider(false, ['codex', 'claude'], ['claude']);
+    await harness.adapter
+      .execute(
+        baseCommand('task.start', {
+          projectId: harness.projectId,
+          instruction: 'do it',
+          providerPreference: 'claude',
+        }),
+      )
+      .then(
+        () => expect.unreachable('Claude should not start before it is authenticated'),
+        (error: {
+          structured: { code: string; userMessage?: string; details?: Record<string, unknown> };
+        }) => {
+          expect(error.structured.code).toBe('CODING_PROVIDER_NOT_INSTALLED');
+          expect(error.structured.userMessage).toContain('claude auth login');
+          expect(error.structured.details).toMatchObject({
+            requestedProvider: 'claude',
+            requestedProviderStatus: 'misconfigured',
+            availableProviders: ['codex'],
+          });
+        },
+      );
   });
 
   it('does not ask in demo mode, where the simulator always wins', async () => {

@@ -296,6 +296,11 @@ export class CodingDomainAdapter implements DomainAdapter {
     if (preference) {
       const preferred = available.find((provider) => provider.providerId === preference);
       if (preferred) return preferred;
+      const requestedDetection = await this.providersById.get(preference)?.detect();
+      const setupCommand =
+        typeof requestedDetection?.details?.setupCommand === 'string'
+          ? requestedDetection.details.setupCommand
+          : null;
       // The refusal carries the alternatives, because a preference that no longer fits is ordinary:
       // it can come from an account preference recorded on another machine, or from a conversation
       // months ago, or from a capability id guessed in place of a provider id. Naming only what
@@ -305,8 +310,15 @@ export class CodingDomainAdapter implements DomainAdapter {
         'CODING_PROVIDER_NOT_INSTALLED',
         `The requested provider ${preference} is not usable on this device`,
         {
+          userMessage: setupCommand
+            ? `${preference} is installed but is not ready. Run ${setupCommand} on that computer, then try again.`
+            : 'The requested coding tool is not installed on that computer.',
           details: {
             requestedProvider: preference,
+            ...(requestedDetection
+              ? { requestedProviderStatus: requestedDetection.status }
+              : {}),
+            ...(setupCommand ? { setupCommand } : {}),
             availableProviders: realProviders.map((provider) => provider.providerId),
           },
         },

@@ -26,6 +26,14 @@ if (args.includes('--help')) {
   process.exit(0);
 }
 
+if (args.includes('auth') && args.includes('status')) {
+  const loggedIn = !args.includes('--stub-logged-out');
+  process.stdout.write(
+    `${JSON.stringify({ loggedIn, authMethod: loggedIn ? 'oauth' : 'none', apiProvider: 'firstParty' })}\n`,
+  );
+  process.exit(loggedIn ? 0 : 1);
+}
+
 function valueOf(flag) {
   const index = args.indexOf(flag);
   return index === -1 ? null : args[index + 1];
