@@ -1,6 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { localAgentConfigSchema } from '@sorema/config';
 import { nowIsoTimestamp } from '@sorema/domain-model';
@@ -9,6 +10,20 @@ import { createLocalAgentDatabase } from '../src/db/client.js';
 import { LocalStore, type LocalJob } from '../src/store/local-store.js';
 
 const started: LocalAgent[] = [];
+
+async function availablePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolvePromise, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolvePromise);
+  });
+  const address = server.address();
+  await new Promise<void>((resolvePromise, reject) =>
+    server.close((error) => (error ? reject(error) : resolvePromise())),
+  );
+  if (!address || typeof address === 'string') throw new Error('No local test port was assigned');
+  return address.port;
+}
 
 afterEach(async () => {
   while (started.length > 0) await started.pop()?.close();
@@ -60,7 +75,7 @@ describe('a second agent started beside a running one', () => {
     const directory = mkdtempSync(join(tmpdir(), 'sorema-single-writer-'));
     // Its own port, because the developer running this very likely has the real agent installed and
     // listening on the default one.
-    const port = 26_000 + (process.pid % 4_000);
+    const port = await availablePort();
     const configuration = configurationFor(directory, port);
 
     const service = buildLocalAgent(configuration);
@@ -84,7 +99,7 @@ describe('a second agent started beside a running one', () => {
 
   it('still marks the jobs a real restart left behind, which is what that pass is for', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'sorema-single-writer-'));
-    const port = 26_000 + ((process.pid + 1) % 4_000);
+    const port = await availablePort();
     const configuration = configurationFor(directory, port);
 
     const before = buildLocalAgent(configuration);

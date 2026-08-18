@@ -16,7 +16,7 @@ import { FakeCodingProvider } from './domains/coding/providers/fake-coding-provi
 import { ClaudeCodeProvider } from './domains/coding/providers/claude-code-provider.js';
 import type { CodingProvider } from './domains/coding/provider-types.js';
 import type { DomainAdapter } from './domains/domain-adapter.js';
-import { LOCAL_AGENT_VERSION, detectCapabilities } from './capabilities/capability-detector.js';
+import { localAgentVersion, detectCapabilities } from './capabilities/capability-detector.js';
 import { CloudTunnelClient } from './tunnel/cloud-tunnel-client.js';
 import { openCloudSocket } from './tunnel/cloud-socket.js';
 import { CommandRateLimiter } from './process/command-rate-limiter.js';
@@ -211,7 +211,7 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     ? new CloudTunnelClient({
         tunnelUrl: config.cloudTunnelUrl,
         identity,
-        agentVersion: process.env.SOREMA_AGENT_VERSION ?? LOCAL_AGENT_VERSION,
+        agentVersion: localAgentVersion(),
         platform: platform(),
         createSocket: openCloudSocket,
         log: (message, detail) => logger.info(detail ?? {}, message),
@@ -231,7 +231,7 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
 
   loopbackServer.get('/health', async () => ({
     status: 'ok',
-    version: LOCAL_AGENT_VERSION,
+    version: localAgentVersion(),
     paired: identity.isPaired,
     tunnel: { connected: cloudTunnel?.isConnected ?? false },
     demoMode: config.demoMode,

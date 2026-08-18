@@ -4,7 +4,11 @@ import { resolveExecutablePath, spawnResolvedExecutable } from '../process/execu
 import type { ProjectRegistry } from '../projects/project-registry.js';
 import type { DomainAdapter } from '../domains/domain-adapter.js';
 
-export const LOCAL_AGENT_VERSION = '0.1.0';
+const DEVELOPMENT_AGENT_VERSION = '0.1.0';
+
+export function localAgentVersion(): string {
+  return process.env.SOREMA_AGENT_VERSION ?? DEVELOPMENT_AGENT_VERSION;
+}
 
 export function detectExecutableVersion(
   executablePath: string,
@@ -60,7 +64,7 @@ export async function detectCapabilities(
     {
       id: 'system.host',
       domain: 'system',
-      version: LOCAL_AGENT_VERSION,
+      version: localAgentVersion(),
       available: true,
       status: 'ready',
       details: {
