@@ -3,6 +3,22 @@ import { homedir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 
 /**
+ * What the folder question does not say on its own.
+ *
+ * The question explains the boundary: the folders inside become the projects, and nothing outside
+ * is touched. It never said what happens inside, and that is the half with consequences. Coding
+ * agents read, change and delete files there, and Sorema starts them in a mode that applies edits
+ * without a prompt per operation.
+ *
+ * It belongs at this moment rather than in the app, because this is where the boundary is actually
+ * chosen, in a terminal, possibly days after anything was accepted in a browser, and possibly by
+ * somebody who installed this from npm and has never opened the app at all.
+ */
+export const WORKSPACE_RISK_WARNING =
+  'Coding agents will read, change and delete files in this folder, without asking\n' +
+  'you each time. Keep your own backups. Nothing outside it is ever touched.\n';
+
+/**
  * Which folders this machine offers as projects.
  *
  * The agent has always read this from `LOCAL_AGENT_WORKSPACE_ROOTS`, and nothing ever set it —

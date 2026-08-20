@@ -10,6 +10,7 @@ import {
   readWorkspaceRoots,
   recoverSwallowedSeparators,
   suggestWorkspaceRoot,
+  WORKSPACE_RISK_WARNING,
   workspaceRootsFilePath,
   writeWorkspaceRoots,
 } from '../src/workspace-roots.js';
@@ -591,5 +592,39 @@ describe('what it offers before anyone has typed anything', () => {
 
     expect(suggestion).not.toBeNull();
     expect(describeWorkspaceRootProblem(String(suggestion))).toBeNull();
+  });
+});
+
+/**
+ * What somebody is told before they name the folder.
+ *
+ * The question itself explains the boundary well: the folders inside become the projects, and
+ * nothing outside is ever touched. What it never said is what happens INSIDE. Coding agents read,
+ * change and delete files there, and Sorema starts them in a mode that applies edits without asking
+ * per operation. That is the consequential half, and the person deciding it is sitting in a
+ * terminal, possibly days after accepting anything in a browser, possibly having installed this
+ * straight from npm and never seen the app at all.
+ *
+ * The text lives here rather than inline in the command so that this test reads the same bytes the
+ * command prints.
+ */
+describe('the warning shown before the folder question', () => {
+  it('says files will be changed and deleted without asking each time', () => {
+    expect(WORKSPACE_RISK_WARNING).toMatch(/delete/i);
+    expect(WORKSPACE_RISK_WARNING).toMatch(/without asking/i);
+  });
+
+  it('tells them to keep their own backups', () => {
+    expect(WORKSPACE_RISK_WARNING).toMatch(/backup/i);
+  });
+
+  it('promises nothing outside the folder', () => {
+    expect(WORKSPACE_RISK_WARNING).toMatch(/outside/i);
+  });
+
+  it('stays short enough that somebody reads it', () => {
+    // Four lines at most. A wall of text in a terminal is skipped, and a warning nobody reads is
+    // worse than none: it is a warning the operator can point at and the user never saw.
+    expect(WORKSPACE_RISK_WARNING.trimEnd().split('\n').length).toBeLessThanOrEqual(4);
   });
 });

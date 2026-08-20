@@ -12,6 +12,7 @@ import {
   expandWorkspaceRoot,
   readWorkspaceRoots,
   suggestWorkspaceRoot,
+  WORKSPACE_RISK_WARNING,
   writeWorkspaceRoots,
 } from './workspace-roots.js';
 
@@ -147,7 +148,8 @@ async function chooseWorkspaceRoots(): Promise<void> {
   process.stdout.write(
     '\nWhere do you keep your code?\n' +
       'The folders inside it become your projects, and it is the only place anything running here\n' +
-      'is allowed to read or change.\n',
+      'is allowed to read or change.\n' +
+      WORKSPACE_RISK_WARNING,
   );
 
   if (!process.stdin.isTTY) {
