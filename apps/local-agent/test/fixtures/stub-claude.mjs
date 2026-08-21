@@ -17,6 +17,7 @@ if (args.includes('--help')) {
       '      --session-id <uuid>',
       '  -r, --resume [value]',
       '      --permission-mode <mode>',
+      '      --disallowed-tools <tools...>',
       ...chromeHelp,
       '      --add-dir <directories...>',
       '      --dangerously-skip-permissions',

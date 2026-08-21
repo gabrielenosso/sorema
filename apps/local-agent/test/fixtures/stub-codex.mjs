@@ -50,7 +50,7 @@ process.stdin.on('end', () => {
     const configOverrides = args.filter((arg, index) => args[index - 1] === '-c');
     writeFileSync(
       lastMessagePath,
-      `${verb} the requested change for: ${instruction.trim()}\n\nAdded a test and the suite passed.\nconfig: ${configOverrides.join(' ')}\n`,
+      `${verb} the requested change for: ${instruction.trim()}\n\nAdded a test and the suite passed.\nconfig: ${configOverrides.join(' ')}\nflags: ${args.join(' ')}\n`,
       'utf8',
     );
   }

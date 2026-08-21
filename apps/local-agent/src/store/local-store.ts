@@ -180,7 +180,9 @@ export class LocalStore {
     return this.database
       .prepare('SELECT payload_json FROM cloud_event_outbox ORDER BY created_at, event_id')
       .all()
-      .map((row) => parseJson<Record<string, unknown> | null>(readOptionalText(row, 'payload_json'), null))
+      .map((row) =>
+        parseJson<Record<string, unknown> | null>(readOptionalText(row, 'payload_json'), null),
+      )
       .filter((payload): payload is Record<string, unknown> => payload !== null);
   }
 

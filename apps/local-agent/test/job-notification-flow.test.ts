@@ -95,9 +95,7 @@ describe('reporting coding task activity to the notification system', () => {
       summary: '',
     });
     expect(
-      jobUpdateForCloud(
-        event('job.started', { startedAt: '2026-08-18T08:00:01.000Z' }),
-      ),
+      jobUpdateForCloud(event('job.started', { startedAt: '2026-08-18T08:00:01.000Z' })),
     ).toEqual({
       eventId: 'event-job.started',
       eventType: 'job.started',

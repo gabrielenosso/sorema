@@ -238,4 +238,28 @@ describe('claude code provider against a stub that speaks the real cli protocol'
     expect(updates.some((update) => update.kind === 'completed')).toBe(false);
     expect((await provider.getTaskStatus('job_cancel_claude')).running).toBe(false);
   });
+
+  /**
+   * Claude Code has no operating-system sandbox and no git requirement of its own, so both of the
+   * things Codex gets for free have to be asked for here. The network denial matters most: with
+   * Bash available an unattended job can push, publish or send, and none of that is undone by any
+   * amount of local history.
+   */
+  it('denies the tools that reach off the machine', async () => {
+    const provider = createProvider();
+    await provider.detect();
+    const updates = await runTask(provider, 'do something', {
+      providerSessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    });
+    const terminal = updates.at(-1);
+    // Asserted first: every assertion below sits inside the narrowing, so a run that ended any
+    // other way would pass this test without checking anything.
+    expect(terminal?.kind).toBe('completed');
+
+    if (terminal?.kind === 'completed') {
+      expect(terminal.summary).toContain('--disallowed-tools');
+      expect(terminal.summary).toMatch(/WebFetch|WebSearch/);
+      expect(terminal.summary).toContain('Bash(git push:*)');
+    }
+  });
 });

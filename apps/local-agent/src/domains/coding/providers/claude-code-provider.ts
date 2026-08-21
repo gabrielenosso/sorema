@@ -328,6 +328,28 @@ export class ClaudeCodeProvider implements CodingProvider {
     // only place this run may touch.
     if (flags.has('--permission-mode')) args.push('--permission-mode', 'acceptEdits');
 
+    // Codex gets both of these from its own design: an operating-system sandbox that denies the
+    // network, and a refusal to run outside a git repository. Claude Code has neither, so the one
+    // that can be asked for is asked for here. Nothing on this list can be undone by local history:
+    // a push reaches collaborators, a publish reaches a registry, a request reaches whoever is
+    // listening. A job that needs one of them says so and waits for somebody at the keyboard.
+    if (flags.has('--disallowed-tools')) {
+      args.push(
+        '--disallowed-tools',
+        [
+          'WebFetch',
+          'WebSearch',
+          'Bash(git push:*)',
+          'Bash(git remote:*)',
+          'Bash(npm publish:*)',
+          'Bash(curl:*)',
+          'Bash(wget:*)',
+          'Bash(ssh:*)',
+          'Bash(scp:*)',
+        ].join(' '),
+      );
+    }
+
     // Browser access is a separate authority boundary. A configuration opt-in alone is not enough:
     // only pass the flag when this exact installed CLI advertised support for it during detection.
     if (this.options.chromeEnabled === true && flags.has('--chrome')) args.push('--chrome');

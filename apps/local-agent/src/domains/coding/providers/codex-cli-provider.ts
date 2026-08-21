@@ -302,7 +302,10 @@ export class CodexCliProvider implements CodingProvider {
     ];
 
     if (flags.has('--json')) args.push('--json');
-    if (flags.has('--skip-git-repo-check')) args.push('--skip-git-repo-check');
+    // Deliberately never passed. Codex refuses to run outside a git repository, and that refusal
+    // is its whole answer to an agent that deletes something: the undo is the git history the user
+    // already has. Passing the flag switched off somebody else safety design and put nothing in
+    // its place, which is the difference between routing a mistake and causing one.
     if (flags.has('--output-last-message')) args.push('--output-last-message', lastMessagePath);
     if (flags.has('--cd')) args.push('--cd', input.session.projectPath);
 

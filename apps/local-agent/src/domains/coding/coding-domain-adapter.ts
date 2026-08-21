@@ -315,9 +315,7 @@ export class CodingDomainAdapter implements DomainAdapter {
             : 'The requested coding tool is not installed on that computer.',
           details: {
             requestedProvider: preference,
-            ...(requestedDetection
-              ? { requestedProviderStatus: requestedDetection.status }
-              : {}),
+            ...(requestedDetection ? { requestedProviderStatus: requestedDetection.status } : {}),
             ...(setupCommand ? { setupCommand } : {}),
             availableProviders: realProviders.map((provider) => provider.providerId),
           },

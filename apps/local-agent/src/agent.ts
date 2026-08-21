@@ -270,8 +270,7 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
         log: (message, detail) => logger.info(detail ?? {}, message),
         reconnectInitialDelayMs: config.reconnectInitialDelayMs,
         reconnectMaxDelayMs: config.reconnectMaxDelayMs,
-        loadPendingJobUpdates: () =>
-          store.listCloudEvents().filter(isCloudJobUpdate),
+        loadPendingJobUpdates: () => store.listCloudEvents().filter(isCloudJobUpdate),
         acknowledgeJobUpdate: (eventId) => store.deleteCloudEvent(eventId),
         handleCommand: (command, requestId) =>
           runCommand(command as DeviceCommand, {

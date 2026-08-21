@@ -5,10 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createLogger } from '@sorema/observability';
 import { CodexCliProvider } from '../src/domains/coding/providers/codex-cli-provider.js';
 import { ClaudeCodeProvider } from '../src/domains/coding/providers/claude-code-provider.js';
-import type {
-  CodingProvider,
-  CodingTaskUpdate,
-} from '../src/domains/coding/provider-types.js';
+import type { CodingProvider, CodingTaskUpdate } from '../src/domains/coding/provider-types.js';
 
 const runLive = process.env.SOREMA_LIVE_CLI_TEST === '1' ? it : it.skip;
 const logger = createLogger('live-coding-provider-test', 'fatal', false);
@@ -40,7 +37,10 @@ function expectSuccessfulSmoke(updates: CodingTaskUpdate[]): void {
   const terminal = updates.findLast(
     (update) => update.kind === 'completed' || update.kind === 'failed',
   );
-  expect(terminal, `No terminal update was received. Updates: ${JSON.stringify(updates)}`).toBeDefined();
+  expect(
+    terminal,
+    `No terminal update was received. Updates: ${JSON.stringify(updates)}`,
+  ).toBeDefined();
   expect(terminal?.kind, JSON.stringify(terminal)).toBe('completed');
   if (terminal?.kind === 'completed') expect(terminal.summary).toContain('SOREMA_CLI_OK');
 }

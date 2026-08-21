@@ -199,4 +199,24 @@ describe('executable resolution', () => {
       '""C:\\Program Files\\nodejs\\claude.CMD" --version"',
     );
   });
+
+  /**
+   * Codex refuses to run outside a git repository unless it is told not to, and that refusal is its
+   * whole answer to an agent that deletes something: the undo is the user's own git history. Sorema
+   * passed the flag that switches it off and offered nothing in its place, which turned somebody
+   * else's safety design into our liability.
+   */
+  it('never disables the git repository check', async () => {
+    const provider = createProvider();
+    await provider.detect();
+    const updates = await runTask(provider, 'do something');
+    const terminal = updates.at(-1);
+    // Asserted first: every assertion below sits inside the narrowing, so a run that ended any
+    // other way would pass this test without checking anything.
+    expect(terminal?.kind).toBe('completed');
+
+    if (terminal?.kind === 'completed') {
+      expect(terminal.summary).not.toContain('--skip-git-repo-check');
+    }
+  });
 });
