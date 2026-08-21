@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createStructuredError, nowIsoTimestamp } from '@sorema/domain-model';
@@ -158,6 +160,32 @@ export class ClaudeCodeProvider implements CodingProvider {
   }
 
   async sendTask(input: SendCodingTaskInput): Promise<CodingJob> {
+    // The same refusal Codex makes for itself, made here because Claude Code does not.
+    //
+    // Everything that undoes a job gone wrong is the user's own git history: the instruction that
+    // reached the agent came through speech recognition that gets between forty and sixty per cent
+    // of words right, so acting on the wrong one is not a remote possibility. In a repository that
+    // is recoverable. In a plain folder it is a deletion and nothing else, and the recovery story
+    // this product tells would have been true for one provider and false for the other.
+    if (!existsSync(join(input.session.projectPath, '.git'))) {
+      input.onUpdate({
+        kind: 'failed',
+        error: createStructuredError(
+          'PROJECT_NOT_ALLOWED',
+          'the project folder is not a git repository',
+          {
+            userMessage:
+              'That folder is not a git repository, so there would be no way to undo what the ' +
+              'agent changes. Run git init in it, then ask again.',
+            details: { projectPath: input.session.projectPath },
+          },
+        ),
+      });
+      // The same shape the missing-executable refusal above returns: the failure reaches the
+      // caller through onUpdate, and this value only says a job object was made.
+      return { jobId: input.jobId, providerId: this.providerId, status: 'running' };
+    }
+
     const detection = await this.detect();
     if (!detection.available) {
       input.onUpdate({

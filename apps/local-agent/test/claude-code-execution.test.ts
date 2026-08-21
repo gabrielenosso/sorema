@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,10 +28,28 @@ function createProvider(
   });
 }
 
+function notARepository(): string {
+  return mkdtempSync(join(tmpdir(), 'ct-claude-plain-'));
+}
+
+/**
+ * Every other test in this file used the bare temp directory, which git does not track. Once the
+ * provider started refusing those, they would all have failed for a reason none of them is about.
+ */
+function aRepository(): string {
+  const folder = mkdtempSync(join(tmpdir(), 'ct-claude-repo-'));
+  mkdirSync(join(folder, '.git'), { recursive: true });
+  return folder;
+}
+
 async function runTask(
   provider: ClaudeCodeProvider,
   instruction: string,
-  session: { providerSessionId?: string; metadata?: Record<string, unknown> } = {},
+  session: {
+    providerSessionId?: string;
+    metadata?: Record<string, unknown>;
+    projectPath?: string;
+  } = {},
 ): Promise<CodingTaskUpdate[]> {
   const updates: CodingTaskUpdate[] = [];
   await provider.sendTask({
@@ -40,7 +58,7 @@ async function runTask(
     session: {
       providerId: 'claude',
       providerSessionId: session.providerSessionId,
-      projectPath: tmpdir(),
+      projectPath: session.projectPath ?? aRepository(),
       title: 'stub project',
       metadata: session.metadata ?? {},
     },
@@ -260,6 +278,24 @@ describe('claude code provider against a stub that speaks the real cli protocol'
       expect(terminal.summary).toContain('--disallowed-tools');
       expect(terminal.summary).toMatch(/WebFetch|WebSearch/);
       expect(terminal.summary).toContain('Bash(git push:*)');
+    }
+  });
+
+  /**
+   * The undo for a job that goes wrong is the user's own git history, which is why Codex refuses to
+   * run outside a repository at all. Claude Code has no such refusal of its own, so a deletion in a
+   * plain folder is simply gone. The registry already records whether a project is a repository and
+   * nothing acted on it, which left the recovery story true for one provider and false for the other.
+   */
+  it('refuses a folder that git is not tracking', async () => {
+    const provider = createProvider();
+    await provider.detect();
+    const updates = await runTask(provider, 'do something', { projectPath: notARepository() });
+    const terminal = updates.at(-1);
+
+    expect(terminal?.kind).toBe('failed');
+    if (terminal?.kind === 'failed') {
+      expect(terminal.error.userMessage).toMatch(/git/i);
     }
   });
 });
