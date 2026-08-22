@@ -117,15 +117,29 @@ export class ClaudeCodeProvider implements CodingProvider {
       await this.runForOutput(['auth', 'status', '--json'], true),
     );
     const authenticated = authStatus?.loggedIn !== false;
+    // An installation that cannot be told what to leave alone is not an installation this can use.
+    // It belongs in the detection rather than only in the refusal at job start, because this is
+    // what the capability report carries and what the assistant reads before it offers the provider
+    // out loud: otherwise it announces a provider it will then decline to run.
+    const canBeToldWhatToLeaveAlone = this.supportedFlags.has('--disallowed-tools');
+    const usable = canRunNonInteractively && authenticated && canBeToldWhatToLeaveAlone;
 
     this.detectionCache = {
       providerId: this.providerId,
-      available: canRunNonInteractively && authenticated,
-      status: canRunNonInteractively && authenticated ? 'ready' : 'misconfigured',
+      available: usable,
+      status: usable ? 'ready' : 'misconfigured',
       version: version.trim(),
       details: {
         authenticated: authStatus?.loggedIn ?? 'unknown',
         ...(authStatus?.loggedIn === false ? { setupCommand: 'claude auth login' } : {}),
+        ...(canBeToldWhatToLeaveAlone
+          ? {}
+          : {
+              setupCommand: 'npm install -g @anthropic-ai/claude-code@latest',
+              unavailableReason:
+                'This Claude Code is too old to be told which tools to leave alone. Update it.',
+            }),
+        supportsDenyList: canBeToldWhatToLeaveAlone,
         supportsResume: this.supportedFlags.has('--resume'),
         supportsPreassignedSessionId: this.supportedFlags.has('--session-id'),
         supportsPermissionMode: this.supportedFlags.has('--permission-mode'),
@@ -186,34 +200,27 @@ export class ClaudeCodeProvider implements CodingProvider {
       return { jobId: input.jobId, providerId: this.providerId, status: 'running' };
     }
 
+    // The deny list is the only thing standing between this run and the actions local git history
+    // cannot undo: a push, a publish, a request to somewhere else. A CLI too old to advertise the
+    // flag is reported unavailable by `detect`, so this one refusal covers it, and it repeats the
+    // reason detection gave rather than the generic one, which would send somebody reinstalling a
+    // tool they already have.
     const detection = await this.detect();
     if (!detection.available) {
+      const reason = detection.details?.unavailableReason;
       input.onUpdate({
         kind: 'failed',
         error: createStructuredError(
           'CODING_PROVIDER_NOT_INSTALLED',
           'Claude Code is not available on this device',
-          { details: { executablePath: this.options.executablePath } },
-        ),
-      });
-      return { jobId: input.jobId, providerId: this.providerId, status: 'running' };
-    }
-
-    // The deny list below is the only thing standing between this run and the actions local git
-    // history cannot undo: a push, a publish, a request to somewhere else. An installed CLI too old
-    // to advertise the flag would be handed the job with none of that withheld, and the refusal that
-    // makes this provider safe would exist only in the source. Nothing is worth starting without it.
-    if (!this.supportedFlags.has('--disallowed-tools')) {
-      input.onUpdate({
-        kind: 'failed',
-        error: createStructuredError(
-          'CODING_PROVIDER_NOT_INSTALLED',
-          'The installed Claude Code does not support --disallowed-tools',
           {
-            userMessage:
-              'This version of Claude Code is too old for me to hold anything back from it. ' +
-              'Update it, and I can start the job.',
-            details: { executablePath: this.options.executablePath },
+            ...(typeof reason === 'string' ? { userMessage: reason } : {}),
+            details: {
+              executablePath: this.options.executablePath,
+              ...(detection.details?.setupCommand !== undefined
+                ? { setupCommand: detection.details.setupCommand }
+                : {}),
+            },
           },
         ),
       });

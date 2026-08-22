@@ -304,6 +304,27 @@ describe('claude code provider against a stub that speaks the real cli protocol'
    * cannot undo. An older CLI that does not advertise the flag would previously have been given the
    * job anyway, silently, with nothing withheld from it.
    */
+  it('reports itself unavailable when the installed cli has no deny list, and says why', async () => {
+    const provider = new ClaudeCodeProvider({
+      executablePath: process.execPath,
+      executableArguments: [STUB_CLAUDE_PATH, '--stub-no-deny-list'],
+      stateDirectory: mkdtempSync(join(tmpdir(), 'ct-claude-old-detect-')),
+      jobTimeoutMs: 20_000,
+      maxOutputBytes: 100_000,
+      logger: silentLogger,
+    });
+
+    const detection = await provider.detect();
+
+    // Not merely a refusal at the moment somebody asks for work. The capability report is what the
+    // rest of the system, and the assistant answering out loud, reads to know this provider exists.
+    expect(detection.available).toBe(false);
+    expect(detection.status).toBe('misconfigured');
+    expect(detection.details?.supportsDenyList).toBe(false);
+    expect(String(detection.details?.unavailableReason ?? '')).toMatch(/too old/i);
+    expect(String(detection.details?.setupCommand ?? '')).toMatch(/claude-code/i);
+  });
+
   it('refuses to start at all when the installed cli has no deny list to pass', async () => {
     const provider = new ClaudeCodeProvider({
       executablePath: process.execPath,
@@ -319,7 +340,7 @@ describe('claude code provider against a stub that speaks the real cli protocol'
 
     expect(terminal?.kind).toBe('failed');
     if (terminal?.kind === 'failed') {
-      expect(terminal.error.userMessage).toMatch(/update|newer|older|version/i);
+      expect(terminal.error.userMessage).toMatch(/too old/i);
     }
   });
 });
