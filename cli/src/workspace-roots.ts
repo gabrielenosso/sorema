@@ -16,7 +16,9 @@ import { join, posix, win32 } from 'node:path';
  */
 export const WORKSPACE_RISK_WARNING =
   'Coding agents will read, change and delete files in this folder, without asking\n' +
-  'you each time. Keep your own backups. Nothing outside it is ever touched.\n';
+  'you each time. Only git repositories inside it are offered as projects, so your\n' +
+  'own history is the way back. Keep your own backups too, and nothing outside the\n' +
+  'folder is ever touched.\n';
 
 /**
  * Which folders this machine offers as projects.

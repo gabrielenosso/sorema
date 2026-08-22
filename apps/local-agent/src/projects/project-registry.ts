@@ -1,5 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { SoremaError, type ProjectSummary } from '@sorema/domain-model';
 import { normalizeWorkspaceRoots, resolveWithinAllowedRoots } from '@sorema/security';
@@ -35,7 +36,10 @@ export class ProjectRegistry {
     for (const root of this.allowedRoots) {
       for (const candidate of [root, ...this.readChildDirectories(root)]) {
         const summary = this.describeProject(candidate);
-        if (summary) projects.set(summary.id, summary);
+        // A folder git is not tracking is not offered at all. Everything a coding agent does here
+        // is undone by going back through the user's own history, and a folder with no history has
+        // no undo: a deletion in one is simply gone.
+        if (summary?.isGitRepository) projects.set(summary.id, summary);
       }
     }
     const all = [...projects.values()].sort((left, right) => left.name.localeCompare(right.name));
@@ -108,7 +112,20 @@ export class ProjectRegistry {
 
     if (existsSync(targetPath)) {
       const existing = this.describeProject(targetPath);
-      if (existing) return existing;
+      if (existing?.isGitRepository) return existing;
+      if (existing) {
+        // Not ours to convert. Turning somebody's existing folder into a repository would commit
+        // whatever is already in it, under this name, without them asking.
+        throw SoremaError.of(
+          'PROJECT_NOT_ALLOWED',
+          `${targetPath} already exists and git is not tracking it`,
+          {
+            userMessage:
+              'There is already a folder with that name, and it is not a git repository. ' +
+              'Pick another name, or set that one up in git yourself first.',
+          },
+        );
+      }
       throw SoremaError.of(
         'PROJECT_NOT_ALLOWED',
         `A file already exists at ${targetPath} and is not a folder`,
@@ -117,11 +134,52 @@ export class ProjectRegistry {
     }
 
     mkdirSync(targetPath, { recursive: true });
+    try {
+      initialiseRepository(targetPath);
+    } catch (error) {
+      // A half-made project is worse than none: it would be invisible to `listProjects` and would
+      // block the name for every later attempt.
+      rmSync(targetPath, { recursive: true, force: true });
+      throw error;
+    }
+
     const created = this.describeProject(targetPath);
     if (!created) {
       throw SoremaError.of('INTERNAL_ERROR', `Could not describe the new project at ${targetPath}`);
     }
     return created;
+  }
+}
+
+/**
+ * A repository and a first commit, because `git init` on its own is not an undo.
+ *
+ * Everything in a freshly initialised repository is untracked, and untracked files are exactly the
+ * ones git cannot bring back. One empty commit is what makes `git reset --hard` mean something on
+ * the day a coding agent deletes the wrong file.
+ */
+function initialiseRepository(folderPath: string): void {
+  const run = (args: readonly string[]): void => {
+    execFileSync('git', [...args], { cwd: folderPath, stdio: 'ignore', windowsHide: true });
+  };
+
+  try {
+    run(['init']);
+  } catch {
+    throw SoremaError.of('PROJECT_NOT_ALLOWED', `git is not available to initialise ${folderPath}`, {
+      userMessage:
+        'I could not start a git repository for that project, because git is not installed on ' +
+        'this machine. Install it and ask me again.',
+    });
+  }
+
+  const firstCommit = ['commit', '--allow-empty', '-m', 'start'];
+  try {
+    run(firstCommit);
+  } catch {
+    // A machine with no git identity configured cannot commit at all. The name on this one commit
+    // is of no consequence, and refusing over it would be refusing the whole feature.
+    run(['-c', 'user.name=Sorema', '-c', 'user.email=sorema@localhost', ...firstCommit]);
   }
 }
 

@@ -199,6 +199,27 @@ export class ClaudeCodeProvider implements CodingProvider {
       return { jobId: input.jobId, providerId: this.providerId, status: 'running' };
     }
 
+    // The deny list below is the only thing standing between this run and the actions local git
+    // history cannot undo: a push, a publish, a request to somewhere else. An installed CLI too old
+    // to advertise the flag would be handed the job with none of that withheld, and the refusal that
+    // makes this provider safe would exist only in the source. Nothing is worth starting without it.
+    if (!this.supportedFlags.has('--disallowed-tools')) {
+      input.onUpdate({
+        kind: 'failed',
+        error: createStructuredError(
+          'CODING_PROVIDER_NOT_INSTALLED',
+          'The installed Claude Code does not support --disallowed-tools',
+          {
+            userMessage:
+              'This version of Claude Code is too old for me to hold anything back from it. ' +
+              'Update it, and I can start the job.',
+            details: { executablePath: this.options.executablePath },
+          },
+        ),
+      });
+      return { jobId: input.jobId, providerId: this.providerId, status: 'running' };
+    }
+
     const resolvedExecutable = resolveExecutablePath(this.options.executablePath);
     if (!resolvedExecutable) {
       input.onUpdate({

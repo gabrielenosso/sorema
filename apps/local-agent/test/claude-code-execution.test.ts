@@ -298,4 +298,28 @@ describe('claude code provider against a stub that speaks the real cli protocol'
       expect(terminal.error.userMessage).toMatch(/git/i);
     }
   });
+
+  /**
+   * The deny list is the only confinement this provider has against the actions local history
+   * cannot undo. An older CLI that does not advertise the flag would previously have been given the
+   * job anyway, silently, with nothing withheld from it.
+   */
+  it('refuses to start at all when the installed cli has no deny list to pass', async () => {
+    const provider = new ClaudeCodeProvider({
+      executablePath: process.execPath,
+      executableArguments: [STUB_CLAUDE_PATH, '--stub-no-deny-list'],
+      stateDirectory: mkdtempSync(join(tmpdir(), 'ct-claude-old-')),
+      jobTimeoutMs: 20_000,
+      maxOutputBytes: 100_000,
+      logger: silentLogger,
+    });
+    await provider.detect();
+    const updates = await runTask(provider, 'do something');
+    const terminal = updates.at(-1);
+
+    expect(terminal?.kind).toBe('failed');
+    if (terminal?.kind === 'failed') {
+      expect(terminal.error.userMessage).toMatch(/update|newer|older|version/i);
+    }
+  });
 });

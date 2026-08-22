@@ -8,6 +8,9 @@ if (args.includes('--version')) {
 
 if (args.includes('--help')) {
   const chromeHelp = args.includes('--stub-no-chrome') ? [] : ['      --chrome'];
+  const denyHelp = args.includes('--stub-no-deny-list')
+    ? []
+    : ['      --disallowed-tools <tools...>'];
   process.stdout.write(
     [
       'Usage: claude [options] [command] [prompt]',
@@ -17,7 +20,7 @@ if (args.includes('--help')) {
       '      --session-id <uuid>',
       '  -r, --resume [value]',
       '      --permission-mode <mode>',
-      '      --disallowed-tools <tools...>',
+      ...denyHelp,
       ...chromeHelp,
       '      --add-dir <directories...>',
       '      --dangerously-skip-permissions',

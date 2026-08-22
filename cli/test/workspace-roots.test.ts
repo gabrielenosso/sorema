@@ -33,8 +33,9 @@ describe('a folder chosen with the command reaches the agent', () => {
     const home = temporaryHome();
     const state = join(home, '.sorema');
     const code = join(home, 'CODE');
-    mkdirSync(join(code, 'alpha'), { recursive: true });
-    mkdirSync(join(code, 'beta'), { recursive: true });
+    // Only folders git is tracking are offered as projects.
+    mkdirSync(join(code, 'alpha', '.git'), { recursive: true });
+    mkdirSync(join(code, 'beta', '.git'), { recursive: true });
 
     writeWorkspaceRoots(state, [code]);
 
@@ -48,11 +49,9 @@ describe('a folder chosen with the command reaches the agent', () => {
     const names = registry.listProjects().map((project) => project.name);
 
     expect(config.allowedWorkspaceRoots).toEqual([code]);
-    // The registry offers the root itself as well as the folders inside it, and the order is a
-    // locale comparison, so this asks what is there rather than what order it came in.
-    expect(names).toContain('alpha');
-    expect(names).toContain('beta');
-    expect(names).toContain('CODE');
+    // The order is a locale comparison, so this asks what is there rather than what order it came
+    // in. The root itself is a plain folder holding the repositories, so it is not one of them.
+    expect(names).toEqual(['alpha', 'beta']);
   });
 
   it('is what the defect looked like: nothing set, nothing offered', () => {
@@ -70,8 +69,8 @@ describe('a folder chosen with the command reaches the agent', () => {
     const state = join(home, '.sorema');
     const work = join(home, 'work');
     const play = join(home, 'play');
-    mkdirSync(join(work, 'invoices'), { recursive: true });
-    mkdirSync(join(play, 'synth'), { recursive: true });
+    mkdirSync(join(work, 'invoices', '.git'), { recursive: true });
+    mkdirSync(join(play, 'synth', '.git'), { recursive: true });
 
     writeWorkspaceRoots(state, [work, play]);
     const config = loadLocalAgentConfig({
@@ -620,6 +619,12 @@ describe('the warning shown before the folder question', () => {
 
   it('promises nothing outside the folder', () => {
     expect(WORKSPACE_RISK_WARNING).toMatch(/outside/i);
+  });
+
+  it('says which folders are eligible at all, because only git repositories are', () => {
+    // The undo is the user's own history, so a folder without one is never offered. Somebody who
+    // does not know that reads an empty project list as a broken install.
+    expect(WORKSPACE_RISK_WARNING).toMatch(/git/i);
   });
 
   it('stays short enough that somebody reads it', () => {

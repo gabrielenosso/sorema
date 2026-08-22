@@ -71,6 +71,8 @@ class ScriptedCodingProvider implements CodingProvider {
 function createHarness() {
   const root = mkdtempSync(join(tmpdir(), 'ct-monotonic-'));
   mkdirSync(join(root, 'demo'), { recursive: true });
+  // Only folders git is tracking are offered as projects.
+  mkdirSync(join(root, 'demo', '.git'), { recursive: true });
   const store = new LocalStore(createLocalAgentDatabase(':memory:'));
   const projectRegistry = new ProjectRegistry([root]);
   const provider = new ScriptedCodingProvider();

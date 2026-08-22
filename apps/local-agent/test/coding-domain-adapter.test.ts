@@ -20,6 +20,9 @@ function createWorkspace(): { root: string; projectPath: string } {
   const root = mkdtempSync(join(tmpdir(), 'ct-adapter-'));
   const projectPath = join(root, 'ai-sorema');
   mkdirSync(projectPath, { recursive: true });
+  // The registry only offers folders git is tracking, so an untracked one here would be invisible
+  // and every harness in this file would fail for a reason none of them is about.
+  mkdirSync(join(projectPath, '.git'), { recursive: true });
   return { root, projectPath };
 }
 

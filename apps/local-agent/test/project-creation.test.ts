@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +11,42 @@ let outsideRoot: string;
 beforeEach(() => {
   workspaceRoot = mkdtempSync(join(tmpdir(), 'ct-workspace-'));
   outsideRoot = mkdtempSync(join(tmpdir(), 'ct-outside-'));
+});
+
+/**
+ * The whole recovery story is git: a coding agent that deletes the wrong file is survivable only
+ * because the user can go back. A folder git is not tracking has no going back, so one is neither
+ * created nor offered.
+ */
+describe('a project is a git repository or it is not a project', () => {
+  it('makes the new folder a repository with something to go back to', () => {
+    const registry = new ProjectRegistry([workspaceRoot]);
+    const project = registry.createProject('tracked');
+
+    expect(project.isGitRepository).toBe(true);
+    expect(
+      execFileSync('git', ['rev-list', '--count', 'HEAD'], {
+        cwd: project.path,
+        encoding: 'utf8',
+      }).trim(),
+    ).toBe('1');
+  });
+
+  it('hides a folder git is not tracking, so it can never be picked for a job', () => {
+    mkdirSync(join(workspaceRoot, 'plain-folder'));
+    const registry = new ProjectRegistry([workspaceRoot]);
+
+    expect(registry.listProjects().map((entry) => entry.name)).not.toContain('plain-folder');
+  });
+
+  it('refuses to take over a folder somebody already put there', () => {
+    mkdirSync(join(workspaceRoot, 'theirs'));
+    writeFileSync(join(workspaceRoot, 'theirs', 'work.txt'), 'mine', 'utf8');
+    const registry = new ProjectRegistry([workspaceRoot]);
+
+    expect(() => registry.createProject('theirs')).toThrow(/already/i);
+    expect(existsSync(join(workspaceRoot, 'theirs', '.git'))).toBe(false);
+  });
 });
 
 describe('creating a project', () => {
@@ -88,16 +125,16 @@ describe('creating a project', () => {
 
 describe('finding a project from a spoken name', () => {
   it.each(['X-AI', 'x ai', 'X_AI', 'x.a.i'])('matches %s to the xai folder', (spokenName) => {
-    mkdirSync(join(workspaceRoot, 'xai'));
     const registry = new ProjectRegistry([workspaceRoot]);
+    registry.createProject('xai');
 
     expect(registry.listProjects(spokenName).map((project) => project.name)).toEqual(['xai']);
   });
 
   it('still supports ordinary substring searches after spoken punctuation is normalized', () => {
-    mkdirSync(join(workspaceRoot, 'xai-scorecard-handover'));
-    mkdirSync(join(workspaceRoot, 'sorema'));
     const registry = new ProjectRegistry([workspaceRoot]);
+    registry.createProject('xai-scorecard-handover');
+    registry.createProject('sorema');
 
     expect(registry.listProjects('scorecard').map((project) => project.name)).toEqual([
       'xai-scorecard-handover',
