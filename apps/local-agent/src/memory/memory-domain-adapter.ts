@@ -4,7 +4,7 @@ import { SoremaError } from '@sorema/domain-model';
 import type { DomainAdapter, DomainCommand, DomainCommandResult } from '../domains/domain-adapter.js';
 import type { MachineMemory } from './machine-memory.js';
 
-const HANDLED: ReadonlySet<string> = new Set(['memory.remember', 'memory.recall']);
+const HANDLED_COMMAND_NAMES: ReadonlySet<string> = new Set(['memory.remember', 'memory.recall']);
 
 /**
  * Answers the note tools from this machine, so the hosted service never holds what somebody asked
@@ -38,7 +38,7 @@ export class MemoryDomainAdapter implements DomainAdapter {
 
   handles(commandName: DeviceCommand['name'], domain?: string): boolean {
     if (domain !== undefined && domain !== this.domain) return false;
-    return HANDLED.has(commandName);
+    return HANDLED_COMMAND_NAMES.has(commandName);
   }
 
   async execute(command: DomainCommand): Promise<DomainCommandResult> {
