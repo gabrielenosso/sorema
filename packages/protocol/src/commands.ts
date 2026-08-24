@@ -100,6 +100,24 @@ export const listJobsCommandSchema = z.object({
   payload: z.object({ activeOnly: z.boolean().optional() }),
 });
 
+/**
+ * The two note commands, which exist only in the `tool` memory mode: the hosted service forwards
+ * them here instead of answering them, so that what somebody asks to be remembered is written on
+ * their own machine and nowhere else.
+ */
+export const rememberCommandSchema = z.object({
+  name: z.literal('memory.remember'),
+  payload: z.object({
+    subject: z.string().trim().min(1).max(200),
+    text: z.string().trim().min(1).max(4_000),
+  }),
+});
+
+export const recallCommandSchema = z.object({
+  name: z.literal('memory.recall'),
+  payload: z.object({ query: z.string().trim().min(1).max(400) }),
+});
+
 export const deviceCommandSchema = z.discriminatedUnion('name', [
   listCapabilitiesCommandSchema,
   listProjectsCommandSchema,
@@ -114,6 +132,8 @@ export const deviceCommandSchema = z.discriminatedUnion('name', [
   getJobStatusCommandSchema,
   cancelJobCommandSchema,
   listJobsCommandSchema,
+  rememberCommandSchema,
+  recallCommandSchema,
 ]);
 
 export type DeviceCommand = z.infer<typeof deviceCommandSchema>;
@@ -176,6 +196,16 @@ export const deviceCommandResultSchemasByName = {
   'job.status': z.object({ job: jobSchema }),
   'job.cancel': z.object({ jobId: z.string(), cancelled: z.boolean(), status: jobStatusSchema }),
   'jobs.list': z.object({ jobs: z.array(jobSchema) }),
+  'memory.remember': z.object({ title: z.string(), created: z.boolean() }),
+  'memory.recall': z.object({
+    threads: z.array(
+      z.object({
+        title: z.string(),
+        recentEntries: z.array(z.object({ text: z.string(), occurredAt: z.string() })),
+      }),
+    ),
+    spokenSummary: z.string(),
+  }),
 } as const;
 
 export type DeviceCommandResultByName = {

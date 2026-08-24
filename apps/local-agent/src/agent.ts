@@ -11,6 +11,8 @@ import { LocalStore } from './store/local-store.js';
 import { DeviceIdentityStore } from './identity/device-identity-store.js';
 import { ProjectRegistry } from './projects/project-registry.js';
 import { CodingDomainAdapter } from './domains/coding/coding-domain-adapter.js';
+import { MachineMemory } from './memory/machine-memory.js';
+import { MemoryDomainAdapter } from './memory/memory-domain-adapter.js';
 import { CodexCliProvider } from './domains/coding/providers/codex-cli-provider.js';
 import { FakeCodingProvider } from './domains/coding/providers/fake-coding-provider.js';
 import { ClaudeCodeProvider } from './domains/coding/providers/claude-code-provider.js';
@@ -212,7 +214,14 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     demoMode: config.demoMode,
   });
 
-  const adapters: DomainAdapter[] = [codingAdapter];
+  // Registered unconditionally. Which memory the product uses is decided in the cloud, and a daemon
+  // that only grew the ability to answer after an upgrade would leave every older machine unable to
+  // remember anything the moment the mode changed.
+  const memoryAdapter = new MemoryDomainAdapter(
+    new MachineMemory(resolveFromWorkspaceRoot(config.stateDirectory)),
+  );
+
+  const adapters: DomainAdapter[] = [codingAdapter, memoryAdapter];
 
   const getCapabilities = (): Promise<Capability[]> =>
     detectCapabilities({ projectRegistry, adapters, demoMode: config.demoMode });
