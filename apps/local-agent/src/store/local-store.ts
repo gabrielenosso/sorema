@@ -8,6 +8,22 @@ type Row = Record<string, SQLOutputValue>;
 
 const ACTIVE_JOB_STATUSES: readonly string[] = ['queued', 'running', 'waiting_for_approval'];
 
+/**
+ * How long a job may go unheard from before it stops holding its project shut.
+ *
+ * The working-tree lock refuses a second agent while one is running, which is right: two agents
+ * editing the same files is how somebody loses work. But a job whose provider died without ever
+ * emitting a terminal event stays `running`, and then every later attempt on that project is refused
+ * for ever — from a voice conversation with no way out at all. A restart clears them; a machine left
+ * on for a week does not restart.
+ *
+ * Measured from when the job began, because a job row carries no heartbeat: it has `created_at`,
+ * `started_at` and `completed_at`, and a running job touches none of them. Twice the provider's own
+ * fifteen-minute timeout, so a slow job that is genuinely working is never mistaken for a dead one —
+ * anything alive at that point has missed its own deadline by the same margin again.
+ */
+const STALE_ACTIVE_JOB_MS = 2 * 15 * 60 * 1_000;
+
 // Built from the list rather than written beside it, so adding a status cannot leave the query
 // binding fewer values than it was given.
 const ACTIVE_JOB_PLACEHOLDERS = ACTIVE_JOB_STATUSES.map(() => '?').join(', ');
@@ -325,9 +341,16 @@ export class LocalStore {
            AND domain_sessions.user_id = ?
            AND domain_sessions.device_id = ?
            AND jobs.status IN (${ACTIVE_JOB_PLACEHOLDERS})
+           AND COALESCE(jobs.started_at, jobs.created_at) >= ?
          ORDER BY jobs.created_at DESC LIMIT 1`,
       )
-      .get(projectPath, userId, deviceId, ...ACTIVE_JOB_STATUSES);
+      .get(
+        projectPath,
+        userId,
+        deviceId,
+        ...ACTIVE_JOB_STATUSES,
+        new Date(Date.now() - STALE_ACTIVE_JOB_MS).toISOString(),
+      );
     return row ? toLocalJob(row) : null;
   }
 
