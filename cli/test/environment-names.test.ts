@@ -73,6 +73,26 @@ describe('the command accepts the codes this system can issue', () => {
     expect(looksLikePairingCode(code)).toBe(true);
   });
 
+  /**
+   * Lengths the service does not issue today. Pinned at exactly eight, a code lengthened on the
+   * server would reach a machine running an older release as "no such command" — a message about the
+   * wrong thing entirely, on the one screen where somebody has no way to tell what went wrong. The
+   * length is the service's business; this only has to recognise the shape.
+   */
+  it.each(['6D246143AB', '6D246143ABCD', '6D24-6143-ABCD', 'A1B2C3'])(
+    'takes %s, a length this build does not issue',
+    (code) => {
+      expect(looksLikePairingCode(code)).toBe(true);
+    },
+  );
+
+  it.each(['abc', 'a'.repeat(17), 'has space', 'has_underscore', ''])(
+    'refuses %s, which no code has ever looked like',
+    (value) => {
+      expect(looksLikePairingCode(value)).toBe(false);
+    },
+  );
+
   it('accepts every code the generator in this repository produces', () => {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       expect(looksLikePairingCode(generatePairingCode())).toBe(true);

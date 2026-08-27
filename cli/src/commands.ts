@@ -29,5 +29,9 @@ export const COMMAND_WORDS: ReadonlySet<string> = new Set([
  */
 export function looksLikePairingCode(value: string | undefined): value is string {
   if (value === undefined || COMMAND_WORDS.has(value)) return false;
-  return /^[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}$/.test(value);
+  // Six to sixteen, dashes anywhere, because the length is the service's business and not this
+  // command's. Pinned at exactly eight, a code lengthened on the server would reach a machine
+  // running an older release as "no such command" — a message about the wrong thing entirely, on
+  // the one screen where somebody has no way to tell what went wrong.
+  return /^[0-9A-Za-z]{2,}(?:-?[0-9A-Za-z]+)*$/.test(value) && value.replace(/-/g, '').length >= 6 && value.replace(/-/g, '').length <= 16;
 }
