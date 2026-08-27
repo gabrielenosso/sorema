@@ -11,16 +11,14 @@ const STUB_CLAUDE_PATH = fileURLToPath(new URL('./fixtures/stub-claude.mjs', imp
 const silentLogger = createLogger('test', 'fatal', false);
 
 function createProvider(
-  options: { chromeEnabled?: boolean; supportsChrome?: boolean; loggedIn?: boolean } = {},
+  options: { loggedIn?: boolean } = {},
 ) {
   return new ClaudeCodeProvider({
     executablePath: process.execPath,
     executableArguments: [
       STUB_CLAUDE_PATH,
-      ...(options.supportsChrome === false ? ['--stub-no-chrome'] : []),
       ...(options.loggedIn === false ? ['--stub-logged-out'] : []),
     ],
-    chromeEnabled: options.chromeEnabled,
     stateDirectory: mkdtempSync(join(tmpdir(), 'ct-claude-run-')),
     jobTimeoutMs: 20_000,
     maxOutputBytes: 100_000,
@@ -82,43 +80,23 @@ describe('claude code provider against a stub that speaks the real cli protocol'
     expect(detection.details).toMatchObject({
       supportsResume: true,
       supportsPreassignedSessionId: true,
-      supportsChrome: true,
-      chromeAccessRequested: false,
-      chromeAccessEnabled: false,
     });
   });
 
-  it('only enables Chrome after an explicit opt-in', async () => {
-    const provider = createProvider({ chromeEnabled: true });
-    const detection = await provider.detect();
-    expect(detection.details).toMatchObject({
-      supportsChrome: true,
-      chromeAccessRequested: true,
-      chromeAccessEnabled: true,
-    });
+  /**
+   * Browser control was removed from this build, so the only assertion left about it is that
+   * nothing can ask for it. `cli/test/no-browser-access.test.ts` holds the whole path shut; this
+   * one holds the flag out of the arguments an actual run is given.
+   */
+  it('never passes --chrome, however the job is phrased', async () => {
+    const provider = createProvider();
+    await provider.detect();
 
-    const updates = await runTask(provider, 'use the browser');
+    const updates = await runTask(provider, 'use the browser to send an email');
     const terminal = updates.at(-1);
-    expect(terminal?.kind).toBe('completed');
-    if (terminal?.kind === 'completed') expect(terminal.summary).toContain('--chrome');
-  });
 
-  it('does not pass --chrome when the installed Claude CLI lacks support', async () => {
-    const provider = createProvider({ chromeEnabled: true, supportsChrome: false });
-    const detection = await provider.detect();
-    expect(detection.available).toBe(true);
-    expect(detection.details).toMatchObject({
-      supportsChrome: false,
-      chromeAccessRequested: true,
-      chromeAccessEnabled: false,
-    });
-
-    const updates = await runTask(provider, 'use the browser');
-    const terminal = updates.at(-1);
     expect(terminal?.kind).toBe('completed');
-    if (terminal?.kind === 'completed') {
-      expect(terminal.summary.split('flags: ')[1]).not.toContain('--chrome');
-    }
+    if (terminal?.kind === 'completed') expect(terminal.summary).not.toContain('--chrome');
   });
 
   it('reports missing when the binary is absent', async () => {
@@ -132,11 +110,6 @@ describe('claude code provider against a stub that speaks the real cli protocol'
     const detection = await provider.detect();
     expect(detection.available).toBe(false);
     expect(detection.status).toBe('missing');
-    expect(detection.details).toMatchObject({
-      supportsChrome: false,
-      chromeAccessRequested: false,
-      chromeAccessEnabled: false,
-    });
   });
 
   it('reports misconfigured instead of ready when Claude is not logged in', async () => {

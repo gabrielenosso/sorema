@@ -76,9 +76,6 @@ export const localAgentConfigSchema = z.object({
     .enum(['read-only', 'workspace-write', 'danger-full-access'])
     .default('workspace-write'),
   claudeCodeExecutablePath: z.string().default('claude'),
-  // Browser control materially expands what a coding task can reach. It must be an explicit opt-in
-  // and the provider still checks that the installed Claude CLI actually supports the flag.
-  claudeCodeChromeEnabled: z.boolean().default(false),
   jobTimeoutMs: z.coerce.number().int().positive().default(900_000),
   // A DynamoDB item cannot exceed 400 KB, and a job summary is one attribute of one item. Anything
   // larger than this and the write that reports a finished job fails, losing the result.
@@ -106,7 +103,6 @@ export function loadLocalAgentConfig(
     codexExecutablePath: environment.CODEX_EXECUTABLE_PATH,
     codexSandboxMode: environment.CODEX_SANDBOX_MODE,
     claudeCodeExecutablePath: environment.CLAUDE_CODE_EXECUTABLE_PATH,
-    claudeCodeChromeEnabled: booleanFromString.parse(environment.CLAUDE_CODE_CHROME_ENABLED),
     jobTimeoutMs: environment.LOCAL_AGENT_JOB_TIMEOUT_MS,
     maxJobOutputBytes: environment.LOCAL_AGENT_MAX_JOB_OUTPUT_BYTES,
     reconnectInitialDelayMs: environment.LOCAL_AGENT_RECONNECT_INITIAL_DELAY_MS,

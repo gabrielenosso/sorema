@@ -68,7 +68,6 @@ describe('the real coding CLIs installed on this machine', () => {
     async () => {
       const provider = new ClaudeCodeProvider({
         executablePath: 'claude',
-        chromeEnabled: false,
         stateDirectory: mkdtempSync(join(tmpdir(), 'sorema-claude-state-')),
         jobTimeoutMs: 120_000,
         maxOutputBytes: 100_000,

@@ -57,7 +57,6 @@ export function buildCodingProviders(config: LocalAgentConfig, logger: Logger): 
   providers.push(
     new ClaudeCodeProvider({
       executablePath: config.claudeCodeExecutablePath,
-      chromeEnabled: config.claudeCodeChromeEnabled,
       stateDirectory: resolve(resolveFromWorkspaceRoot(config.stateDirectory), 'claude'),
       jobTimeoutMs: config.jobTimeoutMs,
       maxOutputBytes: config.maxJobOutputBytes,

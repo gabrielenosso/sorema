@@ -12,7 +12,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { writeWorkspaceRoots } from '../src/workspace-roots.js';
-import { writeClaudeChromeAccess } from '../src/browser-access.js';
 
 const BUNDLE = join(import.meta.dirname, '..', 'dist', 'sorema.mjs');
 
@@ -95,15 +94,20 @@ describe.skipIf(!existsSync(BUNDLE))('the built command runs outside this test r
     );
   });
 
-  it('reads durable Chrome consent in a fresh process and ignores ambient overrides', () => {
+  /**
+   * The built command, not the source, because that is what a user actually runs. A machine that
+   * enabled browser access under an older version still has the consent file and the variable, and
+   * neither may bring the feature back.
+   */
+  it('offers no browser command in the built binary, whatever an old machine still holds', () => {
     const state = mkdtempSync(join(tmpdir(), 'sorema-chrome-setting-'));
-    writeClaudeChromeAccess(state, true);
-    const enabled = run(['status'], 20_000, { CLAUDE_CODE_CHROME_ENABLED: 'false' }, state);
-    expect(enabled.stdout).toContain('Claude Code Chrome access is enabled.');
+    writeFileSync(join(state, 'browser-access.json'), '{"claudeCodeEnabled":true}\n', 'utf8');
 
-    writeClaudeChromeAccess(state, false);
-    const disabled = run(['status'], 20_000, { CLAUDE_CODE_CHROME_ENABLED: 'true' }, state);
-    expect(disabled.stdout).toContain('Claude Code Chrome access is disabled.');
+    const said = run(['status'], 20_000, { CLAUDE_CODE_CHROME_ENABLED: 'true' }, state);
+    const help = run(['help'], 20_000, {}, state);
+
+    expect(`${said.stdout}${said.stderr}`.toLowerCase()).not.toContain('chrome');
+    expect(`${help.stdout}${help.stderr}`.toLowerCase()).not.toContain('chrome');
   });
 
   it('reaches the agent without a module it cannot resolve', () => {
