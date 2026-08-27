@@ -28,6 +28,15 @@ export type CloudTunnelOptions = {
   identity: DeviceIdentityStore;
   agentVersion?: string;
   platform?: string;
+  /**
+   * Which coding agents this machine has, asked once at connect time.
+   *
+   * Without it the assistant told a user it could not say whether Codex or Claude were installed,
+   * and that the answer only arrives when a task starts. That was true of what the cloud had been
+   * given and false of what this process knows: detection has already run by the time the socket
+   * opens. Informational, like the two above — the cloud reads it against its own fixed list.
+   */
+  codingAgents?: () => Promise<readonly string[]>;
   handleCommand: CloudCommandHandler;
   log: (message: string, detail?: Record<string, unknown>) => void;
   createSocket: (url: string, headers: Record<string, string>) => CloudSocket;
@@ -91,13 +100,29 @@ export class CloudTunnelClient {
     this.flushPendingJobUpdates();
   }
 
+  /**
+   * Fire and forget, because asking this machine which coding agents it has means running two
+   * executables, and the signature below must be minted after that rather than before: the server
+   * refuses a timestamp older than a minute, and a slow detection would age one signed first.
+   *
+   * Everything that follows already guards against a second connect overtaking the first, through
+   * the `this.socket !== socket` checks in the handlers.
+   */
   private connect(): void {
+    void this.openSocket();
+  }
+
+  private async openSocket(): Promise<void> {
     const { identity, tunnelUrl, createSocket, log } = this.options;
     const deviceId = identity.deviceId;
     if (!deviceId) {
       log('not paired yet, so there is nothing to connect as');
       return;
     }
+
+    // Failure here must never stop a machine connecting: a wrong list is a worse answer than none,
+    // and no answer at all is worse than either. Asked before signing, never after.
+    const coding = await this.options.codingAgents?.().catch(() => []);
 
     // Signed at the moment of connecting, never before: the server refuses a timestamp older than a
     // minute, and spends each signature once.
@@ -111,6 +136,7 @@ export class CloudTunnelClient {
     // field for authorization; they let the owner see what needs updating.
     if (this.options.agentVersion) headers['x-agent-version'] = this.options.agentVersion;
     if (this.options.platform) headers['x-agent-platform'] = this.options.platform;
+    if (coding && coding.length > 0) headers['x-agent-coding'] = coding.join(',');
 
     const socket = createSocket(tunnelUrl, headers);
     this.socket = socket;

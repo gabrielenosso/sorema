@@ -25,6 +25,7 @@ function harness(
     deviceId?: string | null;
     pendingJobUpdates?: CloudJobUpdate[];
     acknowledgeJobUpdate?: (eventId: string) => void;
+    codingAgents?: () => Promise<readonly string[]>;
   } = {},
 ) {
   const opened: OpenedSocket[] = [];
@@ -57,11 +58,23 @@ function harness(
     },
     loadPendingJobUpdates: () => options.pendingJobUpdates ?? [],
     acknowledgeJobUpdate: options.acknowledgeJobUpdate,
+    codingAgents: options.codingAgents,
   });
 
   const openLatest = () => opened.at(-1)?.socket.onopen?.();
 
-  return { client, opened, sent, scheduled, handleCommand, openLatest };
+  /**
+   * Connecting became asynchronous when the client started asking this machine which coding agents
+   * it has: that answer must be in hand before the signature is minted, because the server refuses a
+   * timestamp older than a minute. So every test that starts or reconnects has to let a microtask
+   * run before the socket exists.
+   */
+  const settle = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+
+  return { client, opened, sent, scheduled, handleCommand, openLatest, settle };
 }
 
 describe('the daemon connecting to the cloud tunnel', () => {
@@ -71,8 +84,9 @@ describe('the daemon connecting to the cloud tunnel', () => {
     context = harness();
   });
 
-  it('proves who it is in the upgrade itself, because there is no round trip afterwards', () => {
+  it('proves who it is in the upgrade itself, because there is no round trip afterwards', async () => {
     context.client.start();
+    await context.settle();
 
     const headers = context.opened[0]?.headers ?? {};
     expect(headers['x-device-id']).toBe('device-1');
@@ -81,10 +95,39 @@ describe('the daemon connecting to the cloud tunnel', () => {
     expect(headers['x-agent-platform']).toBe('win32');
   });
 
-  it('signs a fresh timestamp for every attempt, since the server spends each one', () => {
+  /**
+   * The assistant told a user it could not say whether Codex or Claude were on their machine, and
+   * that the answer only arrives when a task starts. That was true of what the cloud had been given
+   * and false of what this process knows. The list goes up with the connection, before the
+   * signature, because the server refuses a timestamp older than a minute.
+   */
+  it('tells the cloud which coding agents this machine has', async () => {
+    const withAgents = harness({ codingAgents: async () => ['claude', 'codex'] });
+    withAgents.client.start();
+    await withAgents.settle();
+
+    expect(withAgents.opened[0]?.headers['x-agent-coding']).toBe('claude,codex');
+  });
+
+  it('connects anyway when asking the machine fails', async () => {
+    const broken = harness({
+      codingAgents: async () => {
+        throw new Error('detection blew up');
+      },
+    });
+    broken.client.start();
+    await broken.settle();
+
+    expect(broken.opened).toHaveLength(1);
+    expect(broken.opened[0]?.headers['x-agent-coding']).toBeUndefined();
+  });
+
+  it('signs a fresh timestamp for every attempt, since the server spends each one', async () => {
     context.client.start();
+    await context.settle();
     context.opened[0]?.socket.onclose?.({ code: 1006, reason: 'dropped' });
     context.scheduled.shift()?.();
+    await context.settle();
 
     const first = context.opened[0]?.headers['x-device-signature'];
     const second = context.opened[1]?.headers['x-device-signature'];
@@ -95,7 +138,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
     expect(first).toBeTruthy();
   });
 
-  it('does not try to connect at all before it has been paired', () => {
+  it('does not try to connect at all before it has been paired', async () => {
     const unpaired = harness({ deviceId: null });
 
     unpaired.client.start();
@@ -105,6 +148,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
   it('runs a command and answers with the request id it was given', async () => {
     context.client.start();
+    await context.settle();
     context.openLatest();
     context.handleCommand.mockResolvedValue({ projects: ['sorema'] });
 
@@ -124,6 +168,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
   it('runs simultaneous deliveries of one stable request only once', async () => {
     context.client.start();
+    await context.settle();
     context.openLatest();
     let finish!: (value: unknown) => void;
     context.handleCommand.mockReturnValue(new Promise((resolve) => (finish = resolve)));
@@ -145,6 +190,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
   it('answers even when the command throws, so nothing is left waiting', async () => {
     context.client.start();
+    await context.settle();
     context.openLatest();
     context.handleCommand.mockRejectedValue(new Error('the workspace is gone'));
 
@@ -172,6 +218,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
    */
   it('sends the whole structured error, not the sentence at the top of it', async () => {
     context.client.start();
+    await context.settle();
     context.openLatest();
     context.handleCommand.mockRejectedValue(
       SoremaError.of('PROVIDER_CHOICE_REQUIRED', 'no preference has been recorded', {
@@ -213,6 +260,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
     ['a request naming no command', '{"type":"command_request","payload":{"requestId":"r"}}'],
   ])('ignores %s', async (_case, raw) => {
     context.client.start();
+    await context.settle();
 
     context.opened[0]?.socket.onmessage?.({ data: raw });
     await Promise.resolve();
@@ -221,8 +269,9 @@ describe('the daemon connecting to the cloud tunnel', () => {
     expect(context.sent).toHaveLength(0);
   });
 
-  it('queues a finished job until the socket is actually open', () => {
+  it('queues a finished job until the socket is actually open', async () => {
     context.client.start();
+    await context.settle();
 
     context.client.reportJob({
       eventId: 'event-1',
@@ -256,7 +305,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
     });
   });
 
-  it('keeps a job report made while offline and sends it after connecting', () => {
+  it('keeps a job report made while offline and sends it after connecting', async () => {
     expect(() =>
       context.client.reportJob({
         eventId: 'event-1',
@@ -270,6 +319,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
     expect(context.sent).toHaveLength(0);
 
     context.client.start();
+    await context.settle();
     context.openLatest();
 
     expect(context.sent).toHaveLength(1);
@@ -279,8 +329,9 @@ describe('the daemon connecting to the cloud tunnel', () => {
     });
   });
 
-  it('replays an unacknowledged event after reconnecting', () => {
+  it('replays an unacknowledged event after reconnecting', async () => {
     context.client.start();
+    await context.settle();
     context.openLatest();
     context.client.reportJob({
       eventId: 'event-retry',
@@ -296,7 +347,9 @@ describe('the daemon connecting to the cloud tunnel', () => {
     // The already scheduled heartbeat observes the closed socket and exits; the next callback is
     // the reconnect.
     context.scheduled.shift()?.();
+    await context.settle();
     context.scheduled.shift()?.();
+    await context.settle();
     context.openLatest();
 
     expect(context.sent).toHaveLength(2);
@@ -305,6 +358,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
   it('stops replaying an event after the cloud acknowledges it', async () => {
     context.client.start();
+    await context.settle();
     context.openLatest();
     context.client.reportJob({
       eventId: 'event-acked',
@@ -321,13 +375,15 @@ describe('the daemon connecting to the cloud tunnel', () => {
 
     context.opened[0]?.socket.onclose?.({ code: 1006, reason: 'later reconnect' });
     context.scheduled.shift()?.();
+    await context.settle();
     context.scheduled.shift()?.();
+    await context.settle();
     context.openLatest();
 
     expect(context.sent).toHaveLength(1);
   });
 
-  it('restores durable pending events after a complete service restart', () => {
+  it('restores durable pending events after a complete service restart', async () => {
     const restored = harness({
       pendingJobUpdates: [
         {
@@ -342,6 +398,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
     });
 
     restored.client.start();
+    await restored.settle();
     restored.openLatest();
 
     expect(restored.sent).toEqual([
@@ -356,6 +413,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
     const acknowledgeJobUpdate = vi.fn();
     const durable = harness({ acknowledgeJobUpdate });
     durable.client.start();
+    await durable.settle();
     durable.openLatest();
     durable.client.reportJob({
       eventId: 'event-delete',
@@ -373,7 +431,7 @@ describe('the daemon connecting to the cloud tunnel', () => {
     await vi.waitFor(() => expect(acknowledgeJobUpdate).toHaveBeenCalledWith('event-delete'));
   });
 
-  it('backs off between reconnections instead of hammering the authorizer', () => {
+  it('backs off between reconnections instead of hammering the authorizer', async () => {
     const delays: number[] = [];
     const sockets: CloudSocket[] = [];
     const backoff = new CloudTunnelClient({
@@ -405,17 +463,24 @@ describe('the daemon connecting to the cloud tunnel', () => {
     });
 
     backoff.start();
+    await Promise.resolve();
+    await Promise.resolve();
     // The harness reconnects immediately, so what is under test is the delay each attempt *asked*
-    // for: doubling, then held at the ceiling rather than growing without bound.
+    // for: doubling, then held at the ceiling rather than growing without bound. Each reconnect is
+    // asynchronous now — the coding-agent list is fetched before the signature is minted — so every
+    // attempt has to be let through its microtasks before the next close.
     for (let attempt = 0; attempt < 4; attempt += 1) {
       sockets[attempt]?.onclose?.({ code: 1006, reason: 'nope' });
+      await Promise.resolve();
+      await Promise.resolve();
     }
 
     expect(delays).toEqual([1000, 2000, 4000, 4000]);
   });
 
-  it('stops trying once it has been told to stop', () => {
+  it('stops trying once it has been told to stop', async () => {
     context.client.start();
+    await context.settle();
     context.client.stop();
     context.opened[0]?.socket.onclose?.({ code: 1000, reason: 'bye' });
 

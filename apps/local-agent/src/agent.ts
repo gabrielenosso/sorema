@@ -274,6 +274,8 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
         identity,
         agentVersion: localAgentVersion(),
         platform: platform(),
+        codingAgents: async () =>
+          (await codingAdapter.listAvailableProviders()).map((provider) => provider.providerId),
         createSocket: openCloudSocket,
         log: (message, detail) => logger.info(detail ?? {}, message),
         reconnectInitialDelayMs: config.reconnectInitialDelayMs,
