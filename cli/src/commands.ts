@@ -15,7 +15,6 @@ export const COMMAND_WORDS: ReadonlySet<string> = new Set([
   '--help',
   'status',
   'projects',
-  'chrome',
   'pair',
   'start',
   'service',

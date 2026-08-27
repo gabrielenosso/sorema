@@ -3,6 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const mainSource = readFileSync(fileURLToPath(new URL('../src/main.ts', import.meta.url)), 'utf8');
+const commandsSource = readFileSync(
+  fileURLToPath(new URL('../src/commands.ts', import.meta.url)),
+  'utf8',
+);
 const claudeProviderSource = readFileSync(
   fileURLToPath(
     new URL('../../apps/local-agent/src/domains/coding/providers/claude-code-provider.ts', import.meta.url),
@@ -27,6 +31,10 @@ describe('browser control is not in this build', () => {
     expect(mainSource).not.toContain("command === 'chrome'");
     expect(mainSource).not.toContain('sorema chrome enable');
     expect(mainSource).not.toContain('writeClaudeChromeAccess');
+  });
+
+  it('does not even reserve the word, which would make a pairing code beginning "chrome" a command', () => {
+    expect(commandsSource).not.toContain("'chrome'");
   });
 
   it('never hands the flag to the coding agent, whatever a stale file or variable says', () => {

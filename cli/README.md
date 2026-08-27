@@ -33,10 +33,10 @@ as ready; sign in with `claude auth login`, then run `npx sorema@latest` again.
   nothing.
 - There is no `exec` tool. The assistant cannot ask it to run an arbitrary command; it can only ask
   for the operations this program implements.
-- Claude Code cannot use Chrome by default. Run `sorema chrome enable` to opt in; Sorema stores that
-  choice in local per-user state (mode `0600` on POSIX), restarts an installed service, and passes `--chrome` only when
-  the installed Claude CLI advertises support. Browser access can reach signed-in websites. Inspect
-  it with `sorema chrome status` and revoke it with `sorema chrome disable`.
+- It never gives a coding agent your browser. Sorema does not pass Claude Code `--chrome` and has no
+  command to turn that on. Everything a job does here is meant to be undone from your own git
+  history, and an action taken on a signed-in site is the one thing that cannot be. A Codex plugin
+  you installed yourself is outside this: what Codex can reach is decided by Codex's configuration.
 
 ## Licence
 
