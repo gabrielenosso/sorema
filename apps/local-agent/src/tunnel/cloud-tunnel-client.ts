@@ -11,7 +11,10 @@ export type CloudJobUpdate = {
   deviceId: string;
   domainSessionId?: string;
   status: string;
+  /** What the agent actually wrote, for the screen. */
   summary?: string;
+  /** The sentence written to be read aloud, for the assistant. */
+  spokenSummary?: string;
 };
 
 export type CloudSocket = {

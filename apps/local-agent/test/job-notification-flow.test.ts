@@ -36,7 +36,10 @@ describe('reporting coding task activity to the notification system', () => {
         jobId: 'job-1',
         domainSessionId: 'session-1',
         status: 'succeeded',
-        summary: 'Implemented the requested change.',
+        // Both, since they answer different questions. Sending only the spoken sentence is how a
+        // whole review reached the user as its first paragraph.
+        summary: 'Full completion with implementation details.',
+        spokenSummary: 'Implemented the requested change.',
       },
     ],
     [

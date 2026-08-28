@@ -70,8 +70,9 @@ export function buildCodingProviders(config: LocalAgentConfig, logger: Logger): 
  * Which job events travel to the cloud unprompted, and what the cloud should call them.
  *
  * The end of a job has always travelled: whoever started it may have closed the tab, so the news has
- * to be written down where it can wait. `spokenSummary` is preferred because it is the sentence
- * written to be read aloud.
+ * to be written down where it can wait. Both summaries travel: `summary` is what the agent wrote and
+ * is what the screen shows, `spokenSummary` is the sentence written to be read aloud. Sending only
+ * the second is how a whole review reached the user as its first paragraph.
  *
  * The beginning travels for a different reason. `get_job_status` is answered from the row the cloud
  * keeps, and until the machine has said something there is no row — so asking about a task that was
@@ -132,7 +133,11 @@ export function jobUpdateForCloud(event: SoremaEvent): CloudJobUpdate | null {
       jobId: event.payload.jobId,
       domainSessionId: event.payload.domainSessionId,
       status: 'succeeded',
-      summary: event.payload.spokenSummary || event.payload.summary,
+      // Both, and this used to be one. Sending only the spoken sentence meant the long summary never
+      // left the machine: the screen and the voice were given one field and it was the short one, so
+      // a whole review arrived as its first paragraph and the user asked why.
+      summary: event.payload.summary || event.payload.spokenSummary,
+      spokenSummary: event.payload.spokenSummary || event.payload.summary,
     };
   }
   if (event.type === 'job.failed') {
