@@ -46,13 +46,35 @@ export class ProjectRegistry {
     if (!search || search.trim().length === 0) return all;
     const needle = search.trim().toLowerCase();
     const spokenNeedle = normalizeSpokenProjectName(search);
-    return all.filter((project) => {
+    const matched = all.filter((project) => {
       const name = project.name.toLowerCase();
       return (
         name.includes(needle) ||
         (spokenNeedle.length > 0 && normalizeSpokenProjectName(name).includes(spokenNeedle))
       );
     });
+    if (matched.length > 0 || spokenNeedle.length === 0) return matched;
+
+    /**
+     * Nothing matched exactly, so answer the question that was actually asked.
+     *
+     * A microphone that cannot carry a project name is the ordinary case here, not the exception. One
+     * recorded conversation went: the user says a name, the assistant hears `hawk` and finds nothing,
+     * hears `hoch` and finds nothing, hears `hoch with two o` and finds nothing. The project was
+     * `hooch`, on that machine, the whole time. "No" was true three times and useless three times:
+     * nobody is asking whether their spelling exists.
+     *
+     * Near, not any. A word with nothing to do with anything here still comes back empty, because a
+     * loose match is how an agent gets started on a project nobody named.
+     */
+    return all
+      .map((project) => ({
+        project,
+        distance: editDistance(spokenNeedle, normalizeSpokenProjectName(project.name)),
+      }))
+      .filter(({ project, distance }) => distance <= nearEnough(project.name, spokenNeedle))
+      .sort((left, right) => left.distance - right.distance)
+      .map(({ project }) => project);
   }
 
   private readChildDirectories(root: string): string[] {
@@ -234,4 +256,33 @@ export function sanitizeProjectFolderName(rawName: string): string {
     });
   }
   return folderName;
+}
+
+/**
+ * How wrong a heard name may be and still mean this project.
+ *
+ * Proportional to length, because two wrong letters in `xai` is a different word and two wrong
+ * letters in `incremental-geometry` is a microphone. Capped, so that a very long name does not start
+ * matching everything, and floored at one so that a single slip always survives.
+ */
+function nearEnough(name: string, heard: string): number {
+  const longest = Math.max(normalizeSpokenProjectName(name).length, heard.length);
+  return Math.max(1, Math.min(4, Math.floor(longest / 2)));
+}
+
+/** Levenshtein, iterative over two rows: names are short and this runs once per project per search. */
+function editDistance(left: string, right: string): number {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= left.length; row += 1) {
+    const current = [row];
+    for (let column = 1; column <= right.length; column += 1) {
+      current[column] = Math.min(
+        (previous[column] as number) + 1,
+        (current[column - 1] as number) + 1,
+        (previous[column - 1] as number) + (left[row - 1] === right[column - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length] as number;
 }
