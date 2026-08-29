@@ -67,7 +67,7 @@ export class ProjectRegistry {
      * Near, not any. A word with nothing to do with anything here still comes back empty, because a
      * loose match is how an agent gets started on a project nobody named.
      */
-    return all
+    const near = all
       .map((project) => ({
         project,
         distance: editDistance(spokenNeedle, normalizeSpokenProjectName(project.name)),
@@ -75,6 +75,22 @@ export class ProjectRegistry {
       .filter(({ project, distance }) => distance <= nearEnough(project.name, spokenNeedle))
       .sort((left, right) => left.distance - right.distance)
       .map(({ project }) => project);
+    if (near.length > 0) return near;
+
+    /**
+     * Last, and only last: the names that merely sound alike.
+     *
+     * The recogniser produced `hawk` for `hooch` — four letters, three of them different, and no
+     * spelling threshold reaches it without also matching projects nobody named. They are not close
+     * as spellings. They are close as sounds, and this is a voice product.
+     *
+     * Soundex is coarse, English-shaped and forty years old, which is exactly why it runs after
+     * everything precise has already failed: at that point the alternative is telling somebody their
+     * project does not exist while it sits on the machine.
+     */
+    const heardSound = soundex(spokenNeedle);
+    if (heardSound === '') return [];
+    return all.filter((project) => soundex(normalizeSpokenProjectName(project.name)) === heardSound);
   }
 
   private readChildDirectories(root: string): string[] {
@@ -285,4 +301,43 @@ function editDistance(left: string, right: string): number {
     previous = current;
   }
   return previous[right.length] as number;
+}
+
+/**
+ * Soundex, written here rather than installed.
+ *
+ * Fifteen lines against a dependency in the published command, its licence in the credits page, and
+ * its supply chain in something that runs coding agents on somebody's machine. The algorithm has not
+ * changed since 1918 and the tests beside it say what it does.
+ *
+ * A first letter and three consonant codes, with vowels dropped and repeats collapsed. `H` and `W`
+ * do not separate two consonants that would otherwise merge, which is the rule that makes `hawk` and
+ * `hooch` the same code.
+ */
+function soundex(word: string): string {
+  const letters = word.toUpperCase().replace(/[^A-Z]/g, '');
+  if (letters === '') return '';
+  const codeFor = (letter: string): string =>
+    'BFPV'.includes(letter)
+      ? '1'
+      : 'CGJKQSXZ'.includes(letter)
+        ? '2'
+        : 'DT'.includes(letter)
+          ? '3'
+          : letter === 'L'
+            ? '4'
+            : 'MN'.includes(letter)
+              ? '5'
+              : letter === 'R'
+                ? '6'
+                : '';
+
+  let code = letters[0] as string;
+  let previous = codeFor(letters[0] as string);
+  for (const letter of letters.slice(1)) {
+    const digit = codeFor(letter);
+    if (digit !== '' && digit !== previous) code += digit;
+    if (!'HW'.includes(letter)) previous = digit;
+  }
+  return `${code}000`.slice(0, 4);
 }

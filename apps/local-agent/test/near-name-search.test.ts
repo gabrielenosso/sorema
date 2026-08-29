@@ -39,16 +39,15 @@ describe('finding a project whose name was misheard', () => {
   });
 
   /**
-   * `hawk` is what the recogniser actually produced for `hooch`, and no amount of string similarity
-   * reaches it: four letters, three of them different. It is a phonetic collision, not a spelling
-   * one, and pretending otherwise would mean loosening the threshold until unrelated projects match.
+   * `hawk` is what the recogniser actually produced for `hooch`. No spelling threshold reaches it —
+   * four letters, three of them different — and this file said so for an afternoon. It is a phonetic
+   * collision rather than a spelling one, and a third tier answers it; see
+   * `phonetic-name-search.test.ts`.
    *
-   * This is the case the instruction covers instead — when nothing is near, read the projects back
-   * rather than reporting that a guess was not found. The two mechanisms divide the work: near
-   * misses here, hopeless ones there.
+   * Kept here, in the file about spelling, to record that spelling is not what solved it.
    */
-  it('does not reach a name that only sounds similar', () => {
-    expect(names('hawk')).toEqual([]);
+  it('leaves a name that only sounds similar to the tier that can hear it', () => {
+    expect(names('hawk')).toContain('hooch');
   });
 
   it('finds a name the recogniser split or joined', () => {
