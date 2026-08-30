@@ -8,12 +8,16 @@ import {
 import { createStructuredError, nowIsoTimestamp } from '@sorema/domain-model';
 import { redactSecrets, truncateOutput } from '@sorema/security';
 import type { Logger } from '@sorema/observability';
+import { listCodexThreads } from './codex-app-server-client.js';
+import { threadsToExistingSessions } from './codex-thread-listing.js';
 import type {
   CodingJob,
   CodingJobStatus,
   CodingProvider,
   CodingSession,
   CreateCodingSessionInput,
+  ExistingCodingSession,
+  ListExistingCodingSessionsInput,
   ProviderDetectionResult,
   ResumeCodingSessionInput,
   SendCodingTaskInput,
@@ -116,6 +120,36 @@ export class CodexCliProvider implements CodingProvider {
       },
     };
     return this.detectionCache;
+  }
+
+  /**
+   * What Codex already has for this project, including the sessions the person started in the
+   * desktop application: the app and the CLI write to the same store, and `exec resume` takes an id
+   * from either.
+   *
+   * A failure here is an empty list. This answers "what were you working on", and a person who has
+   * never opened the desktop application should hear that there is nothing rather than an error
+   * about a protocol they have never heard of.
+   */
+  async listExistingSessions(
+    input: ListExistingCodingSessionsInput,
+  ): Promise<ExistingCodingSession[]> {
+    try {
+      const threads = await listCodexThreads(
+        {
+          executablePath: this.options.executablePath,
+          executableArguments: this.options.executableArguments,
+        },
+        { cwd: input.projectPath, limit: input.limit },
+      );
+      return threadsToExistingSessions(threads);
+    } catch (error) {
+      this.options.logger.warn(
+        { reason: error instanceof Error ? error.message : String(error) },
+        'codex could not list the sessions it already has',
+      );
+      return [];
+    }
   }
 
   async createSession(input: CreateCodingSessionInput): Promise<CodingSession> {

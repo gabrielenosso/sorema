@@ -16,6 +16,21 @@ export type CodingSession = {
   metadata: Record<string, unknown>;
 };
 
+/**
+ * A session the coding agent already holds in its own store, from work the person started in its
+ * desktop application rather than through Sorema.
+ */
+export type ExistingCodingSession = {
+  providerSessionId: string;
+  title: string;
+  lastActiveAt: string;
+};
+
+export type ListExistingCodingSessionsInput = {
+  projectPath: string;
+  limit: number;
+};
+
 export type CreateCodingSessionInput = {
   projectPath: string;
   title: string;
@@ -61,6 +76,11 @@ export type CodingJobStatus = {
 export interface CodingProvider {
   readonly providerId: string;
   detect(): Promise<ProviderDetectionResult>;
+  /**
+   * Sessions this agent already has for the project, newest first. An agent that keeps no readable
+   * store of its own answers with an empty list rather than failing the call.
+   */
+  listExistingSessions(input: ListExistingCodingSessionsInput): Promise<ExistingCodingSession[]>;
   createSession(input: CreateCodingSessionInput): Promise<CodingSession>;
   resumeSession(input: ResumeCodingSessionInput): Promise<CodingSession>;
   sendTask(input: SendCodingTaskInput): Promise<CodingJob>;

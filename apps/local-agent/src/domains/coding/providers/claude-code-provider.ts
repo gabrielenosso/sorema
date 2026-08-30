@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -15,11 +16,14 @@ import type {
   CodingProvider,
   CodingSession,
   CreateCodingSessionInput,
+  ExistingCodingSession,
+  ListExistingCodingSessionsInput,
   ProviderDetectionResult,
   ResumeCodingSessionInput,
   SendCodingTaskInput,
 } from '../provider-types.js';
 import { parseSupportedFlags, buildSpokenSummary } from './codex-cli-provider.js';
+import { readClaudeSessionsForProject } from './claude-session-store.js';
 
 export const CLAUDE_CODE_PROVIDER_ID = 'claude';
 
@@ -142,6 +146,31 @@ export class ClaudeCodeProvider implements CodingProvider {
       },
     };
     return this.detectionCache;
+  }
+
+  /**
+   * What Claude Code already has for this project, read from its own transcript directory.
+   *
+   * There is no equivalent of the Codex app-server here, so the store is read directly; `--resume`
+   * only finds a session when it is run from that session's own working directory, which is where
+   * `sendTask` already runs, so an id from this list is one this provider can use.
+   */
+  async listExistingSessions(
+    input: ListExistingCodingSessionsInput,
+  ): Promise<ExistingCodingSession[]> {
+    try {
+      return readClaudeSessionsForProject({
+        projectPath: input.projectPath,
+        homeDirectory: homedir(),
+        limit: input.limit,
+      });
+    } catch (error) {
+      this.options.logger.warn(
+        { reason: error instanceof Error ? error.message : String(error) },
+        'claude code could not list the sessions it already has',
+      );
+      return [];
+    }
   }
 
   async createSession(input: CreateCodingSessionInput): Promise<CodingSession> {

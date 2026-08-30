@@ -38,6 +38,16 @@ export const listDomainSessionsCommandSchema = z.object({
   }),
 });
 
+/**
+ * Sessions the coding agents already hold for a project, from work started in their own desktop
+ * applications rather than through Sorema. The answer is a list of Sorema sessions: a discovered
+ * one is adopted before it is reported, so continuing it needs nothing new.
+ */
+export const discoverDomainSessionsCommandSchema = z.object({
+  name: z.literal('domain_sessions.discover'),
+  payload: z.object({ projectId: z.string().min(1) }),
+});
+
 export const renameDomainSessionCommandSchema = z.object({
   name: z.literal('domain_sessions.rename'),
   payload: z.object({
@@ -123,6 +133,7 @@ export const deviceCommandSchema = z.discriminatedUnion('name', [
   listProjectsCommandSchema,
   createProjectCommandSchema,
   listDomainSessionsCommandSchema,
+  discoverDomainSessionsCommandSchema,
   renameDomainSessionCommandSchema,
   archiveDomainSessionCommandSchema,
   startNewDomainSessionCommandSchema,
@@ -183,6 +194,7 @@ export const deviceCommandResultSchemasByName = {
     alreadyExisted: z.boolean(),
   }),
   'domain_sessions.list': z.object({ sessions: z.array(listedDomainSessionSchema) }),
+  'domain_sessions.discover': z.object({ sessions: z.array(managedDomainSessionSchema) }),
   'domain_sessions.rename': z.object({ session: managedDomainSessionSchema }),
   'domain_sessions.archive': z.object({ session: managedDomainSessionSchema }),
   'domain_sessions.start_new': startedJobResultSchema,

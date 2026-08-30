@@ -524,6 +524,10 @@ class StubRealProvider implements CodingProvider {
     };
   }
 
+  async listExistingSessions() {
+    return [];
+  }
+
   async createSession(input: Parameters<CodingProvider['createSession']>[0]) {
     return { ...(await this.delegate.createSession(input)), providerId: this.providerId };
   }

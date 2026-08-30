@@ -5,6 +5,8 @@ import type {
   CodingProvider,
   CodingSession,
   CreateCodingSessionInput,
+  ExistingCodingSession,
+  ListExistingCodingSessionsInput,
   ProviderDetectionResult,
   ResumeCodingSessionInput,
   SendCodingTaskInput,
@@ -48,6 +50,13 @@ export class FakeCodingProvider implements CodingProvider {
       version: 'simulated',
       details: { simulated: true },
     };
+  }
+
+  /** The demo provider keeps no store of its own, so there is never anything to carry on with. */
+  async listExistingSessions(
+    _input: ListExistingCodingSessionsInput,
+  ): Promise<ExistingCodingSession[]> {
+    return [];
   }
 
   async createSession(input: CreateCodingSessionInput): Promise<CodingSession> {

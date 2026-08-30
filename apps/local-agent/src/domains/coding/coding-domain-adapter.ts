@@ -18,8 +18,16 @@ import type { LocalJob, LocalStore } from '../../store/local-store.js';
 import type { ProjectRegistry } from '../../projects/project-registry.js';
 import { createProjectIdentifier } from '../../projects/project-registry.js';
 import type { DomainAdapter, DomainCommand } from '../domain-adapter.js';
-import type { CodingProvider, CodingSession, CodingTaskUpdate } from './provider-types.js';
+import type {
+  CodingProvider,
+  CodingSession,
+  CodingTaskUpdate,
+  ExistingCodingSession,
+} from './provider-types.js';
 import { FAKE_PROVIDER_ID } from './providers/fake-coding-provider.js';
+
+/** Enough to recognise the one they meant, few enough to read back out loud. */
+const EXISTING_SESSIONS_PER_PROVIDER = 10;
 
 const HANDLED_COMMAND_NAMES = new Set([
   'task.start',
@@ -28,6 +36,7 @@ const HANDLED_COMMAND_NAMES = new Set([
   'job.cancel',
   'jobs.list',
   'domain_sessions.list',
+  'domain_sessions.discover',
   'domain_sessions.rename',
   'domain_sessions.archive',
   'domain_sessions.start_new',
@@ -122,6 +131,8 @@ export class CodingDomainAdapter implements DomainAdapter {
               activeJobId: this.options.store.findActiveJobForSession(session.id)?.id,
             })),
         };
+      case 'domain_sessions.discover':
+        return this.discoverExistingSessions(command.command.payload.projectId);
       case 'domain_sessions.rename':
         return this.renameDomainSession(
           command.command.payload.domainSessionId,
@@ -184,6 +195,81 @@ export class CodingDomainAdapter implements DomainAdapter {
     const project = this.options.projectRegistry.createProject(name);
     const alreadyExisted = this.options.projectRegistry.listProjects().length === before;
     return { project, alreadyExisted };
+  }
+
+  /**
+   * The sessions each installed agent already has for this folder, adopted so that everything
+   * downstream can treat them as ordinary Sorema sessions.
+   *
+   * Discovery on its own would have produced an identifier nothing else accepts: continuing a
+   * session, cancelling it and drawing it in the work tab are all written against a stored session
+   * row. So a session found in Codex's or Claude's own store gets one, keyed on the provider and
+   * the provider's own id, and the same session discovered twice keeps the identifier it was given
+   * the first time rather than arriving again as a second copy of the same transcript.
+   */
+  private async discoverExistingSessions(
+    projectId: string,
+  ): Promise<{ sessions: ReturnType<typeof managedSessionFields>[] }> {
+    const projectPath = this.options.projectRegistry.resolveProjectPath(projectId);
+    const providers = await this.listAvailableProviders();
+    const adopted: DomainSession[] = [];
+
+    for (const provider of providers) {
+      const existing = await provider.listExistingSessions({
+        projectPath,
+        limit: EXISTING_SESSIONS_PER_PROVIDER,
+      });
+      for (const found of existing) {
+        adopted.push(this.adoptExistingSession(projectPath, provider.providerId, found));
+      }
+    }
+
+    return {
+      sessions: adopted
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+        .map(managedSessionFields),
+    };
+  }
+
+  private adoptExistingSession(
+    projectPath: string,
+    providerId: string,
+    found: ExistingCodingSession,
+  ): DomainSession {
+    const already = this.options.store
+      .listDomainSessions({
+        domain: this.domain,
+        projectPath,
+        includeArchived: true,
+        userId: this.options.userId,
+        deviceId: this.options.deviceId,
+      })
+      .find(
+        (session) =>
+          session.providerId === providerId &&
+          session.providerSessionId === found.providerSessionId,
+      );
+    if (already) return already;
+
+    const session: DomainSession = {
+      id: createDomainSessionId(),
+      userId: this.options.userId,
+      deviceId: this.options.deviceId,
+      domain: this.domain,
+      providerId,
+      providerSessionId: found.providerSessionId,
+      projectPath,
+      title: found.title,
+      status: 'idle',
+      createdAt: found.lastActiveAt,
+      updatedAt: found.lastActiveAt,
+      // `resumedAt` is what tells the Claude provider to pass `--resume` rather than `--session-id`,
+      // and a session that started outside Sorema has nothing else to resume from.
+      metadata: { adoptedFrom: providerId, resumedAt: found.lastActiveAt },
+    };
+    this.options.store.saveDomainSession(session);
+    this.publish('domain_session.created', session.id, { session });
+    return session;
   }
 
   private requireCodingSession(domainSessionId: string): DomainSession {

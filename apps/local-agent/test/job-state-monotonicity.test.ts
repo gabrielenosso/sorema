@@ -15,6 +15,7 @@ import type {
   CodingSession,
   CodingTaskUpdate,
   CreateCodingSessionInput,
+  ExistingCodingSession,
   ProviderDetectionResult,
   ResumeCodingSessionInput,
   SendCodingTaskInput,
@@ -30,6 +31,10 @@ class ScriptedCodingProvider implements CodingProvider {
 
   async detect(): Promise<ProviderDetectionResult> {
     return { providerId: this.providerId, available: true, status: 'ready' };
+  }
+
+  async listExistingSessions(): Promise<ExistingCodingSession[]> {
+    return [];
   }
 
   async createSession(input: CreateCodingSessionInput): Promise<CodingSession> {
