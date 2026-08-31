@@ -32,7 +32,7 @@ class ProviderWithHistory extends FakeCodingProvider {
   }
 }
 
-function createHarness(providers: CodingProvider[]) {
+function createHarness(providersFor: (projectPath: string) => CodingProvider[]) {
   const root = mkdtempSync(join(tmpdir(), 'ct-discover-'));
   const projectPath = join(root, 'ai-sorema');
   mkdirSync(join(projectPath, '.git'), { recursive: true });
@@ -42,7 +42,7 @@ function createHarness(providers: CodingProvider[]) {
   const adapter = new CodingDomainAdapter({
     store,
     projectRegistry,
-    providers,
+    providers: providersFor(projectPath),
     publishEvent: (event) => events.push(event),
     logger: silentLogger,
     userId: 'user_1',
@@ -74,14 +74,17 @@ function discover(projectId: string, idempotencyKey = 'k1') {
  * adopted into one and comes back with the same identifier every other session has.
  */
 describe('carrying on a session the desktop application started', () => {
-  const morning: ExistingCodingSession = {
+  const morning = (projectPath: string): ExistingCodingSession => ({
     providerSessionId: '019ff153-a463-75b1-a8ad-275be673ad46',
+    projectPath,
     title: 'rewrite the privacy notice',
     lastActiveAt: '2026-08-30T21:05:24.000Z',
-  };
+  });
 
   it('answers with a session identifier continue_task already understands', async () => {
-    const { adapter, store, projectId } = createHarness([new ProviderWithHistory([morning])]);
+    const { adapter, store, projectId } = createHarness((projectPath) => [
+      new ProviderWithHistory([morning(projectPath)]),
+    ]);
 
     const result = (await adapter.execute(discover(projectId))) as {
       sessions: { id: string; title: string; providerId: string }[];
@@ -100,7 +103,9 @@ describe('carrying on a session the desktop application started', () => {
    * offered once per time they asked, and each copy carries on from the same transcript.
    */
   it('adopts one session once, however many times it is discovered', async () => {
-    const { adapter, store, projectId } = createHarness([new ProviderWithHistory([morning])]);
+    const { adapter, store, projectId } = createHarness((projectPath) => [
+      new ProviderWithHistory([morning(projectPath)]),
+    ]);
 
     const first = (await adapter.execute(discover(projectId, 'k1'))) as {
       sessions: { id: string }[];
@@ -115,7 +120,7 @@ describe('carrying on a session the desktop application started', () => {
 
   it('asks each agent only about the folder the person named', async () => {
     const provider = new ProviderWithHistory([]);
-    const { adapter, projectId, projectPath } = createHarness([provider]);
+    const { adapter, projectId, projectPath } = createHarness(() => [provider]);
 
     await adapter.execute(discover(projectId));
 
@@ -128,7 +133,7 @@ describe('carrying on a session the desktop application started', () => {
    */
   it('asks for a handful, not for everything ever run there', async () => {
     const provider = new ProviderWithHistory([]);
-    const { adapter, projectId } = createHarness([provider]);
+    const { adapter, projectId } = createHarness(() => [provider]);
 
     await adapter.execute(discover(projectId));
 
@@ -136,7 +141,9 @@ describe('carrying on a session the desktop application started', () => {
   });
 
   it('refuses a folder the person never authorised', async () => {
-    const { adapter } = createHarness([new ProviderWithHistory([morning])]);
+    const { adapter } = createHarness((projectPath) => [
+      new ProviderWithHistory([morning(projectPath)]),
+    ]);
 
     await expect(adapter.execute(discover('project_somewhere_else'))).rejects.toThrow();
   });

@@ -28,7 +28,7 @@ export type CodexAppServerOptions = {
  */
 export async function listCodexThreads(
   options: CodexAppServerOptions,
-  parameters: { cwd: string; limit: number },
+  parameters: { cwd?: string; limit: number },
 ): Promise<CodexThread[]> {
   const resolvedExecutable = resolveExecutablePath(options.executablePath);
   if (!resolvedExecutable) return [];
@@ -53,7 +53,10 @@ export async function listCodexThreads(
     });
     connection.notify('initialized');
     const result = await connection.request('thread/list', {
-      cwd: parameters.cwd,
+      // Omitted when the question is about the machine. The filter is an exact match on one folder,
+      // so asking for everything and keeping what is authorised is the only way to answer "what was
+      // I working on" — and it costs the same, because the index is what is being read either way.
+      ...(parameters.cwd === undefined ? {} : { cwd: parameters.cwd }),
       limit: parameters.limit,
       useStateDbOnly: true,
     });

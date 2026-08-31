@@ -22,12 +22,19 @@ export type CodingSession = {
  */
 export type ExistingCodingSession = {
   providerSessionId: string;
+  /**
+   * Where the agent says the session was working. It travels because the answer may be about the
+   * whole machine, and because an agent's own store covers the whole disk: what comes back has to
+   * be checked against the roots the person authorised before any of it is offered.
+   */
+  projectPath: string;
   title: string;
   lastActiveAt: string;
 };
 
 export type ListExistingCodingSessionsInput = {
-  projectPath: string;
+  /** Omitted when the question was about the machine rather than about one folder. */
+  projectPath?: string;
   limit: number;
 };
 

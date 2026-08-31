@@ -45,7 +45,12 @@ export const listDomainSessionsCommandSchema = z.object({
  */
 export const discoverDomainSessionsCommandSchema = z.object({
   name: z.literal('domain_sessions.discover'),
-  payload: z.object({ projectId: z.string().min(1) }),
+  /**
+   * The project is optional, because the question usually is not about one. Asked which sessions
+   * were open, somebody was answered about a single project they had never named — there were a
+   * hundred and eighty on that machine and the assistant had to pick one to be able to ask at all.
+   */
+  payload: z.object({ projectId: z.string().min(1).optional() }),
 });
 
 export const renameDomainSessionCommandSchema = z.object({
@@ -194,7 +199,9 @@ export const deviceCommandResultSchemasByName = {
     alreadyExisted: z.boolean(),
   }),
   'domain_sessions.list': z.object({ sessions: z.array(listedDomainSessionSchema) }),
-  'domain_sessions.discover': z.object({ sessions: z.array(managedDomainSessionSchema) }),
+  // The listed shape, not the managed one: an answer that may cover the whole computer has to say
+  // which folder each session was in, and `domain_sessions.list` already carries that.
+  'domain_sessions.discover': z.object({ sessions: z.array(listedDomainSessionSchema) }),
   'domain_sessions.rename': z.object({ session: managedDomainSessionSchema }),
   'domain_sessions.archive': z.object({ session: managedDomainSessionSchema }),
   'domain_sessions.start_new': startedJobResultSchema,

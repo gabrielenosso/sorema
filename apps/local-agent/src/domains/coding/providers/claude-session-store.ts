@@ -17,10 +17,20 @@ const LIVE_WRITER_WINDOW_MS = 5 * 60 * 1000;
 const TITLE_CHARACTER_LIMIT = 120;
 
 export type ReadClaudeSessionsInput = {
-  projectPath: string;
+  /** Omitted when the question was about the machine rather than about one folder. */
+  projectPath?: string;
   homeDirectory: string;
   limit: number;
 };
+
+/**
+ * How many transcripts are opened when no project narrows the search.
+ *
+ * Every directory on this machine together holds a few hundred, each up to twenty megabytes, and
+ * the head of one is half a megabyte. Sorted newest first, the answer to "what was I working on" is
+ * always in the first handful, so the rest are never opened.
+ */
+const NEWEST_TRANSCRIPTS_SEARCHED = 60;
 
 /**
  * The sessions Claude Code already holds for one project, newest first.
@@ -37,33 +47,40 @@ export function readClaudeSessionsForProject(
   input: ReadClaudeSessionsInput,
 ): ExistingCodingSession[] {
   const projectsDirectory = join(input.homeDirectory, '.claude', 'projects');
-  const wanted = comparablePath(input.projectPath);
-  const found: (ExistingCodingSession & { modifiedAt: number })[] = [];
+  const wanted = input.projectPath === undefined ? null : comparablePath(input.projectPath);
 
+  // Everything the store holds, dated, before anything is opened. Sorting first is what makes the
+  // machine-wide question affordable: the newest few transcripts are read and the rest are not.
+  const candidates: { path: string; providerSessionId: string; modifiedAt: number }[] = [];
   for (const directory of directoriesIn(projectsDirectory)) {
     for (const name of filesIn(join(projectsDirectory, directory))) {
       if (!name.endsWith('.jsonl')) continue;
       const path = join(projectsDirectory, directory, name);
-      const head = readHead(path);
-      if (head === null) continue;
-      const transcript = summariseTranscript(head);
-      if (transcript.cwd === null || comparablePath(transcript.cwd) !== wanted) continue;
-      if (transcript.firstUserMessage === null) continue;
       const modifiedAt = modificationTime(path);
       if (Date.now() - modifiedAt < LIVE_WRITER_WINDOW_MS) continue;
-      found.push({
-        providerSessionId: name.slice(0, -'.jsonl'.length),
-        title: transcript.firstUserMessage,
-        lastActiveAt: new Date(modifiedAt).toISOString(),
-        modifiedAt,
-      });
+      candidates.push({ path, providerSessionId: name.slice(0, -'.jsonl'.length), modifiedAt });
     }
   }
+  candidates.sort((left, right) => right.modifiedAt - left.modifiedAt);
 
-  return found
-    .sort((left, right) => right.modifiedAt - left.modifiedAt)
-    .slice(0, input.limit)
-    .map(({ modifiedAt: _modifiedAt, ...session }) => session);
+  const searchable =
+    wanted === null ? candidates.slice(0, NEWEST_TRANSCRIPTS_SEARCHED) : candidates;
+  const found: ExistingCodingSession[] = [];
+  for (const candidate of searchable) {
+    if (found.length === input.limit) break;
+    const head = readHead(candidate.path);
+    if (head === null) continue;
+    const transcript = summariseTranscript(head);
+    if (transcript.cwd === null || transcript.firstUserMessage === null) continue;
+    if (wanted !== null && comparablePath(transcript.cwd) !== wanted) continue;
+    found.push({
+      providerSessionId: candidate.providerSessionId,
+      projectPath: transcript.cwd,
+      title: transcript.firstUserMessage,
+      lastActiveAt: new Date(candidate.modifiedAt).toISOString(),
+    });
+  }
+  return found;
 }
 
 /**

@@ -122,14 +122,7 @@ export class CodingDomainAdapter implements DomainAdapter {
               userId: this.options.userId,
               deviceId: this.options.deviceId,
             })
-            .map((session) => ({
-              ...managedSessionFields(session),
-              projectId: session.projectPath
-                ? createProjectIdentifier(session.projectPath)
-                : `unlinked:${session.id}`,
-              projectName: session.projectPath ? basename(session.projectPath) : 'Other work',
-              activeJobId: this.options.store.findActiveJobForSession(session.id)?.id,
-            })),
+            .map((session) => this.listedSession(session)),
         };
       case 'domain_sessions.discover':
         return this.discoverExistingSessions(command.command.payload.projectId);
@@ -208,9 +201,12 @@ export class CodingDomainAdapter implements DomainAdapter {
    * the first time rather than arriving again as a second copy of the same transcript.
    */
   private async discoverExistingSessions(
-    projectId: string,
-  ): Promise<{ sessions: ReturnType<typeof managedSessionFields>[] }> {
-    const projectPath = this.options.projectRegistry.resolveProjectPath(projectId);
+    projectId: string | undefined,
+  ): Promise<{ sessions: ReturnType<CodingDomainAdapter['listedSession']>[] }> {
+    const projectPath =
+      projectId === undefined
+        ? undefined
+        : this.options.projectRegistry.resolveProjectPath(projectId);
     const providers = await this.listAvailableProviders();
     const adopted: DomainSession[] = [];
 
@@ -220,14 +216,23 @@ export class CodingDomainAdapter implements DomainAdapter {
         limit: EXISTING_SESSIONS_PER_PROVIDER,
       });
       for (const found of existing) {
-        adopted.push(this.adoptExistingSession(projectPath, provider.providerId, found));
+        // Checked here rather than trusted from the agent. Codex and Claude both keep one store for
+        // the whole disk, so what comes back covers folders this machine was never given, and the
+        // registry is the one place that knows which ones those are.
+        let allowedPath: string;
+        try {
+          allowedPath = this.options.projectRegistry.assertPathIsAllowed(found.projectPath);
+        } catch {
+          continue;
+        }
+        adopted.push(this.adoptExistingSession(allowedPath, provider.providerId, found));
       }
     }
 
     return {
       sessions: adopted
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .map(managedSessionFields),
+        .map((session) => this.listedSession(session)),
     };
   }
 
@@ -270,6 +275,18 @@ export class CodingDomainAdapter implements DomainAdapter {
     this.options.store.saveDomainSession(session);
     this.publish('domain_session.created', session.id, { session });
     return session;
+  }
+
+  /** One shape for both listings, so the two commands answering about sessions cannot drift apart. */
+  private listedSession(session: DomainSession) {
+    return {
+      ...managedSessionFields(session),
+      projectId: session.projectPath
+        ? createProjectIdentifier(session.projectPath)
+        : `unlinked:${session.id}`,
+      projectName: session.projectPath ? basename(session.projectPath) : 'Other work',
+      activeJobId: this.options.store.findActiveJobForSession(session.id)?.id,
+    };
   }
 
   private requireCodingSession(domainSessionId: string): DomainSession {

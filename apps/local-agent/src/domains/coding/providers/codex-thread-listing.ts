@@ -11,6 +11,7 @@ const TITLE_CHARACTER_LIMIT = 120;
  */
 export type CodexThread = {
   id?: unknown;
+  cwd?: unknown;
   preview?: unknown;
   updatedAt?: unknown;
   recencyAt?: unknown;
@@ -24,10 +25,12 @@ export function threadsToExistingSessions(
   for (const thread of threads) {
     const providerSessionId = typeof thread.id === 'string' ? thread.id : '';
     const title = singleLine(typeof thread.preview === 'string' ? thread.preview : '');
-    if (!providerSessionId || !title) continue;
+    const projectPath = typeof thread.cwd === 'string' ? thread.cwd : '';
+    if (!providerSessionId || !title || !projectPath) continue;
     if (isStillLoaded(thread.status)) continue;
     sessions.push({
       providerSessionId,
+      projectPath,
       title,
       lastActiveAt: toTimestamp(thread.updatedAt ?? thread.recencyAt),
     });
