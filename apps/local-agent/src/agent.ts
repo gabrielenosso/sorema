@@ -25,6 +25,11 @@ import {
 } from './tunnel/cloud-tunnel-client.js';
 import { openCloudSocket } from './tunnel/cloud-socket.js';
 import { CommandRateLimiter } from './process/command-rate-limiter.js';
+import {
+  isNewerReleaseVersion,
+  type AgentRelease,
+  type AgentUpdateResult,
+} from './release/agent-release.js';
 
 export type LocalAgent = {
   config: LocalAgentConfig;
@@ -40,6 +45,18 @@ export type LocalAgent = {
   start: () => Promise<void>;
   close: () => Promise<void>;
 };
+
+export type LocalAgentOptions = {
+  release?: AgentRelease;
+  exitForReplacement?: () => Promise<void>;
+};
+
+const OUTBOX_DRAIN_TIMEOUT_MS = 10_000;
+const OUTBOX_DRAIN_POLL_INTERVAL_MS = 100;
+
+function agentUpdateRefusal(message: string, userMessage: string, retryable: boolean): SoremaError {
+  return SoremaError.of('COMMAND_REJECTED', message, { userMessage, retryable });
+}
 
 export function buildCodingProviders(config: LocalAgentConfig, logger: Logger): CodingProvider[] {
   const providers: CodingProvider[] = [];
@@ -175,7 +192,10 @@ export function jobUpdateForCloud(event: SoremaEvent): CloudJobUpdate | null {
   return null;
 }
 
-export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
+export function buildLocalAgent(
+  config: LocalAgentConfig,
+  options: LocalAgentOptions = {},
+): LocalAgent {
   const logger = createLogger(
     'local-agent',
     config.logLevel,
@@ -231,6 +251,73 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     detectCapabilities({ projectRegistry, adapters, demoMode: config.demoMode });
 
   const rateLimiter = new CommandRateLimiter();
+  let agentUpdateInProgress = false;
+
+  const waitForCloudOutboxToDrain = async (): Promise<void> => {
+    const deadline = Date.now() + OUTBOX_DRAIN_TIMEOUT_MS;
+    while (store.listCloudEvents().length > 0 && Date.now() < deadline) {
+      await new Promise((resolvePromise) =>
+        setTimeout(resolvePromise, OUTBOX_DRAIN_POLL_INTERVAL_MS),
+      );
+    }
+  };
+
+  const replaceThisAgent = async (release: AgentRelease, targetVersion: string): Promise<void> => {
+    try {
+      await release.prepareReplacement(targetVersion);
+    } catch (error) {
+      logger.error(
+        { targetVersion, error: error instanceof Error ? error.message : String(error) },
+        'agent update failed, staying on the current version',
+      );
+      agentUpdateInProgress = false;
+      return;
+    }
+    logger.info({ targetVersion }, 'replacement agent started, handing over');
+    await waitForCloudOutboxToDrain();
+    await options.exitForReplacement?.();
+  };
+
+  const beginAgentUpdate = async (): Promise<AgentUpdateResult> => {
+    const release = options.release;
+    if (!release) {
+      throw agentUpdateRefusal(
+        'This agent was not started from a published release',
+        'This computer runs Sorema from source, so it cannot update itself.',
+        false,
+      );
+    }
+    if (store.listJobs({ activeOnly: true }).length > 0) {
+      throw agentUpdateRefusal(
+        'Refusing to update while a job is active',
+        'A task is running on this computer. Update once it has finished.',
+        true,
+      );
+    }
+    agentUpdateInProgress = true;
+    const currentVersion = localAgentVersion();
+    let targetVersion: string;
+    try {
+      targetVersion = await release.fetchLatestVersion();
+    } catch (error) {
+      agentUpdateInProgress = false;
+      throw agentUpdateRefusal(
+        `Could not read the latest release: ${error instanceof Error ? error.message : String(error)}`,
+        'Could not check for a new version. Try again in a minute.',
+        true,
+      );
+    }
+    if (!isNewerReleaseVersion(targetVersion, currentVersion)) {
+      agentUpdateInProgress = false;
+      throw agentUpdateRefusal(
+        `Latest release ${targetVersion} is not newer than ${currentVersion}`,
+        'This computer already runs the latest version.',
+        false,
+      );
+    }
+    setTimeout(() => void replaceThisAgent(release, targetVersion), 0);
+    return { currentVersion, targetVersion };
+  };
 
   /**
    * One command, run once, whatever asked for it.
@@ -243,7 +330,15 @@ export function buildLocalAgent(config: LocalAgentConfig): LocalAgent {
     context: { userId: string; deviceId: string; correlationId: string; idempotencyKey: string },
   ): Promise<unknown> => {
     const commandName = command.name;
+    if (agentUpdateInProgress) {
+      throw agentUpdateRefusal(
+        `Refusing ${commandName} while the agent is updating`,
+        'This computer is updating Sorema and will be back in a minute.',
+        true,
+      );
+    }
     rateLimiter.check(commandName, store.listJobs({ activeOnly: true }).length);
+    if (commandName === 'agent.update') return beginAgentUpdate();
     if (commandName === 'capabilities.list') {
       return { capabilities: await getCapabilities() };
     }

@@ -360,7 +360,7 @@ export type Runner = (command: readonly string[]) => void;
  * own JavaScript entry point through the Node that is already executing avoids both the batch file
  * and the shell that would otherwise be needed to read it.
  */
-function npmCommand(): string[] {
+export function npmCommand(): string[] {
   if (platform() !== 'win32') return ['npm'];
   const cli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
   return existsSync(cli) ? [process.execPath, cli] : ['npm.cmd'];

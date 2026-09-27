@@ -1,6 +1,7 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { agentProcessIdPath, loadEnvironmentFiles, loadLocalAgentConfig } from '@sorema/config';
 import { buildLocalAgent } from './agent.js';
+import type { AgentRelease } from './release/agent-release.js';
 
 /**
  * Starts the agent and stays running until the process is asked to stop.
@@ -8,10 +9,13 @@ import { buildLocalAgent } from './agent.js';
  * Separate from `index.ts` so that the packaged command can call it. A module that starts a daemon
  * as a side effect of being imported cannot be reused by anything.
  */
-export async function runAgent(): Promise<void> {
+export async function runAgent(release?: AgentRelease): Promise<void> {
   loadEnvironmentFiles(process.cwd());
   const configuration = loadLocalAgentConfig();
-  const agent = buildLocalAgent(configuration);
+  const agent = buildLocalAgent(configuration, {
+    release,
+    exitForReplacement: () => shutdown('replaced by a newer release'),
+  });
   const processIdPath = agentProcessIdPath(configuration.stateDirectory);
   let publishedProcessId = false;
 
@@ -36,12 +40,12 @@ export async function runAgent(): Promise<void> {
     agent.logger.warn('This machine is not paired yet. Run "sorema pair <CODE>" first.');
   }
 
-  const shutdown = async (signal: string): Promise<void> => {
+  async function shutdown(signal: string): Promise<void> {
     agent.logger.info({ signal }, 'shutting down');
     withdrawProcessId();
     await agent.close();
     process.exit(0);
-  };
+  }
 
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));

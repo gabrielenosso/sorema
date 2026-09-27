@@ -2,6 +2,7 @@ import { hostname, homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { looksLikePairingCode } from './commands.js';
+import { publishedAgentRelease, takeOverFromReplacedProcess } from './self-update.js';
 import {
   describeUnsupportedNodeVersion,
   nodeVersionHasBuiltInSqlite,
@@ -191,6 +192,13 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  await takeOverFromReplacedProcess(process.env, VERSION);
+  const release = publishedAgentRelease({
+    executable: process.execPath,
+    scriptArguments: process.argv.slice(1),
+    launchEnvironment: { ...process.env },
+    stateDirectory: stateDirectory(),
+  });
   applyDefaults();
   const [command, argument] = process.argv.slice(2);
 
@@ -271,7 +279,7 @@ async function main(): Promise<number> {
             'Could not install it globally, so it will run here instead.\nLeave this window open.\n',
           );
           const { runAgent } = await import('../../apps/local-agent/src/run.js');
-          await runAgent();
+          await runAgent(release);
           return 0;
         }
         // The service must point at the copy that will still be there, not at the one running now.
@@ -300,7 +308,7 @@ async function main(): Promise<number> {
       }
       if (step.action === 'run-in-foreground') {
         const { runAgent } = await import('../../apps/local-agent/src/run.js');
-        await runAgent();
+        await runAgent(release);
       }
     }
     return steps.some((step) => step.action === 'explain' && !identity.isPaired) ? 1 : 0;
@@ -409,7 +417,7 @@ async function main(): Promise<number> {
       return 1;
     }
     const { runAgent } = await import('../../apps/local-agent/src/run.js');
-    await runAgent();
+    await runAgent(release);
     return 0;
   }
 

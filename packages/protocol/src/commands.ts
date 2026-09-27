@@ -133,6 +133,11 @@ export const recallCommandSchema = z.object({
   payload: z.object({ query: z.string().trim().min(1).max(400) }),
 });
 
+export const updateAgentCommandSchema = z.object({
+  name: z.literal('agent.update'),
+  payload: z.object({}).strict(),
+});
+
 export const deviceCommandSchema = z.discriminatedUnion('name', [
   listCapabilitiesCommandSchema,
   listProjectsCommandSchema,
@@ -150,6 +155,7 @@ export const deviceCommandSchema = z.discriminatedUnion('name', [
   listJobsCommandSchema,
   rememberCommandSchema,
   recallCommandSchema,
+  updateAgentCommandSchema,
 ]);
 
 export type DeviceCommand = z.infer<typeof deviceCommandSchema>;
@@ -225,6 +231,7 @@ export const deviceCommandResultSchemasByName = {
     ),
     spokenSummary: z.string(),
   }),
+  'agent.update': z.object({ currentVersion: z.string(), targetVersion: z.string() }),
 } as const;
 
 export type DeviceCommandResultByName = {
